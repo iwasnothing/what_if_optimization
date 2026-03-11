@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **What-If Analysis Tool** built as a full-stack application with a Next.js frontend and FastAPI backend. The application allows users to upload CSV data, configure parameters and variables, define formulas and constraints, create scenarios, and perform what-if analysis using Google OR-Tools CP-SAT solver with LLM-generated optimization code.
+This is a **What-If Analysis Tool** built as a full-stack application with a Next.js frontend and FastAPI backend. The application allows users to upload CSV data, configure parameters and variables, define formulas and constraints, create scenarios, and perform what-if analysis using Google OR-Tools CP-SAT solver with an LLM-generated structured optimization configuration.
 
 ## Development Commands
 
@@ -40,24 +40,21 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 The backend loads environment variables from a `.env` file in the `backend/` directory using `python-dotenv`.
 
 **Setting up .env file:**
-1. Copy `backend/.env.example` to `backend/.env`
+1. Create `backend/.env`
 2. Edit `.env` with your LLM configuration
 3. No need to set environment variables manually
 
 **Default Configuration (Local LLM):**
 - `OPENAI_API_KEY` - API key (defaults to "dummy-key" for local LLM)
-- `OPENAI_BASE_URL` - Base URL for OpenAI-compatible endpoint (default: "http://localhost:11434/v1" for Ollama)
-- `OPENAI_MODEL` - Model name to use (default: "llama3")
-
-For Anthropic models:
-- `ANTHROPIC_API_KEY` - API key for Anthropic
-- `LLM_TYPE` - Set to "openai" or "anthropic" (default: "openai")
+- `OPENAI_BASE_URL` - Base URL for OpenAI-compatible endpoint (default: "http://localhost:4000/v1")
+- `OPENAI_MODEL` - Model name to use (default: "Qwen3-30B-A3B-Instruct-FP8")
+- `CPSAT_DEBUG_DIR` - Directory for debug files (default: `/tmp/what-if-cpsat-debug`)
 
 **.env Examples:**
 ```bash
-# Default: Local LLM (Ollama with llama3)
-OPENAI_BASE_URL=http://localhost:11434/v1
-OPENAI_MODEL=llama3
+# Default: Local LLM (port 4000)
+OPENAI_BASE_URL=http://localhost:4000/v1
+OPENAI_MODEL=Qwen3-30B-A3B-Instruct-FP8
 OPENAI_API_KEY=dummy-key
 
 # Local vLLM
@@ -68,15 +65,6 @@ OPENAI_MODEL=llama-3-70b-instruct
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o
 OPENAI_API_KEY=sk-your-openai-api-key
-
-# Azure OpenAI
-OPENAI_BASE_URL=https://your-resource.openai.azure.com/openai/deployments/your-deployment
-OPENAI_MODEL=gpt-4
-OPENAI_API_KEY=your-azure-key
-
-# Anthropic (uncomment to use)
-ANTHROPIC_API_KEY=sk-ant-your-key
-LLM_TYPE=anthropic
 ```
 
 ## Architecture
@@ -94,9 +82,9 @@ LLM_TYPE=anthropic
 - **Pydantic** for data validation
 - **Uvicorn** as ASGI server
 - **LangGraph** for workflow orchestration
-- **LangChain** for LLM integration
+- **LangChain** for LLM integration with structured output
 - **Google OR-Tools CP-SAT** for constraint solving
-- **OpenAI GPT-4o** or **Anthropic Claude 3.5 Sonnet** for code generation
+- **Pandas** for DataFrame operations
 
 ### Project Structure
 ```
@@ -106,23 +94,22 @@ what-if/
 │   │   ├── components/      # React components organized by feature
 │   │   ├── lib/            # Utility functions and constants
 │   │   ├── types/          # TypeScript type definitions
-│   │   ├── layout.tsx      # Root layout with Geist fonts
+│   │   ├── layout.tsx      # Root layout
 │   │   ├── page.tsx        # Main application entry
-│   │   └── globals.css     # Global styles and custom scrollbar
-│   ├── public/             # Static assets
+│   │   └── globals.css     # Global styles
 │   └── package.json
 └── backend/
-    ├── main.py             # FastAPI application entry
-    ├── models.py           # Pydantic models for request/response
+    ├── main.py             # FastAPI application entry (with LangChain patch)
+    ├── models.py           # Pydantic models including CPSatConfig
     ├── requirements.txt     # Python dependencies
-    ├── api/                # API route handlers
+    ├── api/
     │   └── scenario.py     # Scenario optimization endpoints
-    ├── services/           # Business logic layer
-    │   ├── optimization.py   # Legacy optimization (formula evaluation)
-    │   ├── cpsat_service.py # CP-SAT code verification and execution
-    │   ├── llm_service.py  # LLM code generation and fixing
-    │   └── langgraph_workflow.py  # Workflow orchestration
-    └── debug/              # Auto-saved generated CP-SAT code for debugging
+    ├── services/
+    │   ├── optimization.py       # Legacy optimization (formula evaluation)
+    │   ├── cpsat_service.py     # CP-SAT config execution (deterministic)
+    │   ├── llm_service.py       # LLM generates structured CPSatConfig
+    │   └── langgraph_workflow.py # Workflow orchestration
+    └── debug/              # Auto-saved generated configs (default: /tmp/what-if-cpsat-debug)
 ```
 
 ### Application Layout (Three-Pane Design)
@@ -148,25 +135,25 @@ The main application (`frontend/app/page.tsx`) uses a three-pane layout:
 
 ### Backend Service Layer Architecture
 
-The backend follows a layered service architecture:
+The backend follows a layered service architecture with a **structured config approach** (not code generation):
 
 **API Layer (`backend/api/scenario.py`)**:
 - `POST /api/run_scenario` - Main endpoint using CP-SAT/LangGraph workflow
-- `POST /api/run_scenario_legacy` - Legacy endpoint using formula evaluation (for backward compatibility)
+- `POST /api/run_scenario_legacy` - Legacy endpoint using formula evaluation
 - `GET /api/health` - Health check endpoint
 
 **Services Layer (`backend/services/`)**:
 
 1. **`LLMService`** (`llm_service.py`):
-   - `generate_cpsat_code()` - Generates CP-SAT Python code from problem context
-   - `fix_cpsat_code()` - Fixes code based on error messages with retry logic
+   - `generate_cpsat_config()` - Generates structured `CPSatConfig` JSON from problem context using LangChain's structured output
    - Builds detailed prompts with context from scenario, config, and CSV data
+   - Returns a Pydantic `CPSatConfig` object, not executable code
 
 2. **`CPSatService`** (`cpsat_service.py`):
-   - `verify_cpsat_code()` - Syntax validation and structure checking
-   - `execute_cpsat_code()` - Executes code in sandboxed environment
-   - Extracts variable values and objective values from solver
-   - Automatically saves generated code to `backend/debug/` directory
+   - `execute_cpsat_config()` - Executes structured config deterministically (no code generation/verification)
+   - Creates CP-SAT model, solver, variables, constraints, and objective from config
+   - Handles floating-point values with scaling (SCALE = 100)
+   - Automatically saves generated config to `CPSAT_DEBUG_DIR` directory
 
 3. **`OptimizationService`** (`optimization.py`):
    - `evaluate_formula()` - Safe formula evaluation with variable substitution
@@ -180,28 +167,25 @@ The backend follows a layered service architecture:
 
 ### LangGraph Workflow
 
-The CP-SAT optimization uses a state machine workflow with retry logic:
+The CP-SAT optimization uses a simple state machine workflow:
 
 **Workflow States**:
 - `initialize` - Build context from request data
-- `generate` - Generate initial CP-SAT code using LLM
-- `verify` - Verify code syntax and structure
-- `fix` - Fix invalid code (up to 3 retries)
-- `execute` - Run verified code with OR-Tools solver
+- `generate` - Generate structured `CPSatConfig` using LLM (retries up to 3 times on error)
+- `execute` - Run config deterministically with OR-Tools solver
 - `failure` - Handle final failure after all retries
 
 **Conditional Edges**:
-- After `verify`: Retry if invalid and retries < 3, otherwise execute or fail
+- After `generate`: Execute if success, retry if failed and retries < 3, otherwise fail
 - After `execute`: Return success if solver finds solution, otherwise fail
 
 **Workflow State** (`WorkflowState` TypedDict):
 - Input: `config`, `scenario`, `csv_data`, `context`
-- Generated code: `generated_code`, `original_code`
-- Verification: `is_valid`, `error_message`
+- Generated config: `generated_config` (CPSatConfig), `is_valid`, `error_message`
 - Execution: `execution_result`, `final_variable_values`, `final_objective_value`
 - Retry tracking: `retry_count`, `max_retries`
 
-### CP-SAT Code Generation Process
+### CP-SAT Config Generation Process
 
 1. **Context Creation** - `create_context_from_request()` builds a dictionary with:
    - Spreadsheet columns and data
@@ -211,32 +195,39 @@ The CP-SAT optimization uses a state machine workflow with retry logic:
    - Portfolio-level variables (with aggregation functions)
    - Constraints and objectives
 
-2. **LLM Prompt Building** - Constructs detailed prompt instructing LLM to:
-   - Import OR-Tools CP-SAT
-   - Create model and solver
-   - Create decision variables for each row
-   - Add constraints based on formulas
-   - Set objective function
-   - Extract and return results
+2. **LLM Prompt Building** - Constructs prompt instructing LLM to:
+   - Translate formulas into linear `Term` objects (sum of [variable/column/parameter * coefficient])
+   - NOT attempt to scale floats in the JSON (backend handles scaling)
+   - Map `[name]` tags from user formulas to correct `term_type`
 
-3. **Code Verification** - Checks:
-   - Valid Python syntax (AST parsing)
-   - Required imports (ortools, cp_model)
-   - Model creation (CpModel())
-   - Solver creation (CpSolver())
-   - Solve() call present
+3. **Structured Output** - Uses LangChain's `with_structured_output(CPSatConfig)` for type-safe generation
 
-4. **Code Execution** - Runs generated code with:
-   - Sandboxed namespace
-   - Captured stdout
+4. **Config Execution** - Runs generated config with:
+   - Pandas DataFrame for CSV data
+   - CP-SAT model and solver creation
+   - Decision variables for each row (with scaling factor of 100)
+   - Constraints built from `Term` objects
+   - Objective function built from `Term` objects
    - Timeout (default 30s)
-   - Variable value extraction
-   - Objective value extraction
 
 5. **Debug File Saving** - Automatically saves:
-   - `cpsat_executed_*.py` - Code before execution
-   - `cpsat_fixed_*.py` - Code after retry fixes
-   - `cpsat_error_context_*.txt` - Error messages and original code
+   - `cpsat_generated_config_*.json` - Structured config before execution
+   - `cpsat_error_context_*.txt` - Error messages
+
+### Important Backend Details
+
+**LangChain Module Patch** (`main.py`):
+- The app patches the `langchain` module to work around a `langchain.verbose` attribute issue
+- LangSmith tracing is disabled to avoid unauthorized upload attempts
+
+**Floating-Point Scaling** (`cpsat_service.py`):
+- CP-SAT only supports integers, so all floating-point values are scaled by 100 (SCALE constant)
+- Objective values are divided by SCALE before returning to frontend
+- Variable values are divided by SCALE when collected
+
+**Constraint Scopes** (`cpsat_service.py`):
+- Constraints are classified by scope: `row`, `portfolio`, `global`, or `mixed`
+- Mixed constraints (row + portfolio terms) are not allowed and will raise an error
 
 ### State Management (Frontend)
 
@@ -267,6 +258,19 @@ Props flow downward from `page.tsx` to child components, with callbacks bubbling
 - `ConfigState` - Complete application configuration
 - `LogEntry` - Activity log entry with id, time, message
 
+### CP-SAT Data Models (`backend/models.py`)
+
+The `CPSatConfig` Pydantic model defines the structured JSON schema:
+
+- `CPSatRowInputVariable` - Row-level input variable with name_prefix, min_value, max_value
+- `CPSatRowIntermediateVariable` - Row-level intermediate with name_prefix and list of `Term` objects
+- `CPSatPortfolioVariable` - Portfolio variable with portfolio_name, group_by_columns, aggregate_function, source_row_variable
+- `CPSatConstraint` - Constraint with description, left_terms, operator, right_terms (all as `Term` lists)
+- `CPSatObjective` - Objective with direction ("maximize"/"minimize") and list of `Term` objects
+- `Term` - Atomic term with term_type, name_or_value, coefficient
+
+Term types: `"row_input"`, `"row_intermediate"`, `"portfolio_var"`, `"column"`, `"parameter"`, `"constant"`
+
 ### CSV Parsing (`frontend/app/lib/helpers.ts`)
 
 The `parseCSV` function handles:
@@ -296,11 +300,12 @@ All components use these classes for visual consistency.
 4. Backend: Calls `run_cpsat_optimization()` workflow:
    - Initializes `LLMService` and `CPSatService`
    - Builds context dictionary from request data
-   - Runs LangGraph workflow (generate → verify → fix → execute)
-   - On each retry, LLM fixes code based on error messages
-   - Code automatically saved to `backend/debug/`
+   - Runs LangGraph workflow (initialize → generate_config → execute)
+   - LLM generates structured `CPSatConfig` JSON
+   - `CPSatService` executes config deterministically
+   - Config automatically saved to `CPSAT_DEBUG_DIR`
 5. Backend: Returns `OptimizationResult` with:
-   - `objectiveValue` - From CP-SAT solver
+   - `objectiveValue` - From CP-SAT solver (scaled down by 100)
    - `portfolioResults` - Variable values mapped for compatibility
    - `constraintViolations` - Empty list (CP-SAT handles constraints internally)
 6. Frontend: Updates scenario state with results and logs completion
@@ -316,19 +321,20 @@ Formulas use `[VariableName]` syntax for variable references:
 
 Example: `[Revenue] - [Cost]` would calculate profit.
 
-**Note:** The CP-SAT mode converts formulas to CP-SAT constraints, not formula evaluation. Formula evaluation is only used in legacy mode (`/api/run_scenario_legacy`).
+**Note:** The CP-SAT mode converts formulas to structured `Term` objects in `CPSatConfig`, not formula evaluation. Formula evaluation is only used in legacy mode (`/api/run_scenario_legacy`).
 
 ## Debugging CP-SAT Issues
 
 When CP-SAT optimization fails:
 
-1. Check `backend/debug/` directory for generated code files
-2. Look at most recent `cpsat_executed_*.py` or `cpsat_fixed_*.py`
+1. Check `CPSAT_DEBUG_DIR` (default: `/tmp/what-if-cpsat-debug`) for generated config files
+2. Look at most recent `cpsat_generated_config_*.json`
 3. Review `cpsat_error_context_*.txt` for error messages
 4. Check backend logs for detailed workflow trace
 5. Common issues:
-   - Invalid CP-SAT API usage
+   - Invalid term_type mapping in generated config
    - Incorrect variable bounds
+   - Mixed constraint scopes (row + portfolio terms)
    - Incompatible constraint definitions
    - Missing or incorrect objective function
 
@@ -336,9 +342,12 @@ When CP-SAT optimization fails:
 
 - **Backend required**: The frontend calls backend API at `http://localhost:8000/api/run_scenario`. The backend must be running for optimizations to work.
 - **Type safety**: Strict TypeScript in frontend, Pydantic models in backend ensure type consistency across the API boundary.
-- **Glassmorphism**: All panels use `glassPanel` class from `lib/constants.ts`. Custom scrollbar is defined in `globals.css` with `.custom-scrollbar` class.
+- **LangChain patch**: The backend patches the `langchain` module to work around a module issue - this is intentional.
+- **LangSmith disabled**: LangSmith tracing is disabled to avoid unauthorized upload attempts.
+- **Floating-point scaling**: All floating-point values are scaled by 100 (SCALE) for CP-SAT, then divided when returning results.
+- **Constraint scope validation**: Mixed row/portfolio constraints are not allowed and will raise an error.
 - **Icons**: Use `lucide-react` for all icons.
 - **Responsive layout**: All panels use `flex-1` for responsive layout; avoid fixed heights unless necessary.
 - **Formula safety**: Backend uses `eval()` with restricted builtins for formula evaluation (legacy mode only) - only safe expressions are allowed.
 - **Logging**: Backend includes comprehensive logging of all workflow stages, request attributes, and optimization results.
-- **Debug files**: All generated CP-SAT code is automatically saved to `backend/debug/` for debugging purposes. Old files can be safely deleted.
+- **Debug files**: All generated CP-SAT configs are automatically saved to `CPSAT_DEBUG_DIR` for debugging purposes. Old files can be safely deleted.
