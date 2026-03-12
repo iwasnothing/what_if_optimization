@@ -1,17 +1,7 @@
 # FastAPI Backend for What-If Analysis Tool
 
 import os
-import sys
 import logging
-
-# Patch the langchain.verbose issue before importing langchain modules
-class LangChainModule:
-    def __getattr__(self, name):
-        if name == 'verbose':
-            return False  # Mock verbose attribute
-        raise AttributeError(f"module 'langchain' has no attribute '{name}'")
-
-sys.modules['langchain'] = LangChainModule()
 
 # Disable LangSmith/LangChain tracing to avoid unauthorized upload attempts.
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
@@ -40,9 +30,10 @@ app = FastAPI(
 )
 
 # CORS middleware for frontend
+# Allow all origins for flexibility with different hostnames
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

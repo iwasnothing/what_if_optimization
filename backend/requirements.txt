@@ -3,11 +3,11 @@ uvicorn[standard]==0.32.0
 pydantic==2.9.2
 python-multipart==0.0.12
 python-dotenv==1.0.1
-# LangChain for LLM integration (modular packages)
-langchain-core==0.2.28
-langchain-openai==0.1.20
-langchain-anthropic==0.1.20
+# LangChain for LLM integration
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
 # LangGraph for workflow orchestration
-langgraph==0.1.7
+langgraph>=0.2.0
 # OR-Tools for CP-SAT solver
 ortools==9.10.4067

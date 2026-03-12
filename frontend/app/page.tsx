@@ -24,6 +24,17 @@ import { glassPanel } from "./lib/constants";
 
 const initialLogs: LogEntry[] = [];
 
+// Get backend URL dynamically based on browser's host
+const getBackendUrl = () => {
+  if (typeof window !== "undefined") {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    // Use the same host as the browser, but backend port 8080
+    return `${protocol}//${hostname}:8080`;
+  }
+  return "http://localhost:8080";
+};
+
 const initialConfig: ConfigState = {
   scenarioParameters: [],
   rowLevelInputVariables: [],
@@ -115,7 +126,7 @@ export default function App() {
             rows: csvData.rows.map(row => ({ data: row })),
           } : null;
 
-          const response = await fetch("http://localhost:8000/api/run_scenario", {
+          const response = await fetch(`${getBackendUrl()}/api/run_scenario`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

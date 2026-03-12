@@ -1,0 +1,17 @@
+model_list:
+  - model_name: qwen-30b
+    litellm_params:
+      model: openai//models/Qwen/Qwen3-30B-A3B-Instruct-FP8
+      api_base: http://host.docker.internal:8000/v1
+      api_key: sk-dummy-token
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: sk-1234
+  set_verbose: true
+  require_api_key: false
+  set_internal_user_api_key: false
+  set_key_alias_cache: false
+  set_cache: false

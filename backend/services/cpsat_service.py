@@ -363,9 +363,13 @@ class CPSatService:
                 raise ValueError(f"Portfolio variable not found: {name}")
             if group_key is None:
                 raise ValueError(f"Portfolio variable term requires group key: {name}")
-            if group_key not in portfolio_vars[name]:
-                raise ValueError(f"Portfolio group not found: {name}[{group_key}]")
-            out["coeffs"][portfolio_vars[name][group_key]] = coeff
+            # Handle "All" group - if the requested group_key doesn't exist, try using "All"
+            actual_group_key = group_key
+            if group_key not in portfolio_vars[name] and "All" in portfolio_vars[name]:
+                actual_group_key = "All"
+            if actual_group_key not in portfolio_vars[name]:
+                raise ValueError(f"Portfolio group not found: {name}[{actual_group_key}]")
+            out["coeffs"][portfolio_vars[name][actual_group_key]] = coeff
             return out
 
         raise ValueError(f"Unsupported term type: {term_type}")
@@ -434,30 +438,94 @@ class CPSatService:
             )
 
         if scope == "portfolio":
-            keys: set[str] = set()
+            # Collect all portfolio variables referenced in this constraint
+            portfolio_vars_in_constraint = {}
             for term in all_terms:
                 if term.term_type == "portfolio_var":
-                    keys.update(portfolio_vars.get(str(term.name_or_value), {}).keys())
-            for group_key in sorted(keys):
-                left = self._build_expr_for_terms(
-                    terms=constraint.left_terms,
-                    row_index=None,
-                    row=None,
-                    scenario_params=scenario_params,
-                    row_vars=row_vars,
-                    portfolio_vars=portfolio_vars,
-                    group_key=group_key,
-                )
-                right = self._build_expr_for_terms(
-                    terms=constraint.right_terms,
-                    row_index=None,
-                    row=None,
-                    scenario_params=scenario_params,
-                    row_vars=row_vars,
-                    portfolio_vars=portfolio_vars,
-                    group_key=group_key,
-                )
-                self._add_linear_constraint(model, left, constraint.operator, right)
+                    name = str(term.name_or_value)
+                    if name not in portfolio_vars_in_constraint:
+                        portfolio_vars_in_constraint[name] = portfolio_vars.get(name, {})
+
+            # Check if all portfolio variables have the same group keys
+            # If they differ, we cannot create a single constraint
+            all_group_keys: set[str] = set()
+            for name, groups in portfolio_vars_in_constraint.items():
+                all_group_keys.update(groups.keys())
+
+            # Special handling for mixed-grouping constraints (grouped + ungrouped "All")
+            # Only check portfolio variables that are actually in the constraint
+            has_grouped_var = any(len(portfolio_vars[name].keys()) > 1 for name in portfolio_vars_in_constraint)
+            has_all_group = "All" in all_group_keys
+
+            if has_grouped_var and has_all_group:
+                # Create separate constraint for each group of grouped variables
+                # Always use "All" group for ungrouped variables
+                # Find all group keys from grouped portfolio variables
+                grouped_var_keys: list[str] = []
+                ungrouped_var_name = None
+                for name, groups in portfolio_vars_in_constraint.items():
+                    if len(groups.keys()) > 1:
+                        grouped_var_keys.extend(groups.keys())
+                    elif "All" in groups.keys():
+                        ungrouped_var_name = name
+
+                if not grouped_var_keys:
+                    raise ValueError(f"Expected grouped portfolio variables in mixed constraint")
+
+                # Create constraint for each group key
+                for group_key in sorted(grouped_var_keys):
+                    left = self._build_expr_for_terms(
+                        terms=constraint.left_terms,
+                        row_index=None,
+                        row=None,
+                        scenario_params=scenario_params,
+                        row_vars=row_vars,
+                        portfolio_vars=portfolio_vars,
+                        group_key=group_key,
+                    )
+                    # For right side, always use ungrouped variable with "All" group
+                    right = self._build_expr_for_terms(
+                        terms=constraint.right_terms,
+                        row_index=None,
+                        row=None,
+                        scenario_params=scenario_params,
+                        row_vars=row_vars,
+                        portfolio_vars=portfolio_vars,
+                        group_key="All",
+                    )
+                    self._add_linear_constraint(model, left, constraint.operator, right)
+                return
+            # Original validation: all portfolio vars must have same group keys
+            # Only apply to portfolio-only constraints (not mixed with row/params)
+            if scope == "portfolio" and len(portfolio_vars_in_constraint) > 1:
+                first_groups = set(list(portfolio_vars_in_constraint.values())[0].keys())
+                if not all(set(groups.keys()) == first_groups for groups in portfolio_vars_in_constraint.values()):
+                    raise ValueError(
+                            f"Constraint '{constraint.description}' mixes portfolio variables with incompatible groupings, which is not supported. "
+                            f"All portfolio variables in a constraint must have the same group_by_columns."
+                        )
+
+                # Now create constraint for each group key (all portfolio vars should have same groups)
+                for group_key in sorted(all_group_keys):
+                    left = self._build_expr_for_terms(
+                        terms=constraint.left_terms,
+                        row_index=None,
+                        row=None,
+                        scenario_params=scenario_params,
+                        row_vars=row_vars,
+                        portfolio_vars=portfolio_vars,
+                        group_key=group_key,
+                    )
+                    right = self._build_expr_for_terms(
+                        terms=constraint.right_terms,
+                        row_index=None,
+                        row=None,
+                        scenario_params=scenario_params,
+                        row_vars=row_vars,
+                        portfolio_vars=portfolio_vars,
+                        group_key=group_key,
+                    )
+                    self._add_linear_constraint(model, left, constraint.operator, right)
             return
 
         if scope == "row":

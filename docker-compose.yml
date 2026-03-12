@@ -1,0 +1,71 @@
+services:
+  # LiteLLM Sidecar - Proxies requests to host LLM server
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: what-if-litellm
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-dummy-token}
+    command: ["--model", "openai//models/Qwen/Qwen3-30B-A3B-Instruct-FP8", "--api_base", "http://host.docker.internal:8000/v1", "--port", "4000", "--detailed_debug", "--drop_params"]
+    ports:
+      - "4000:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - what-if-network
+  # Backend API - FastAPI with CP-SAT optimization
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: what-if-backend
+    ports:
+      - "8080:8000"
+    environment:
+      # Connect to LiteLLM sidecar instead of host directly
+      - OPENAI_BASE_URL=http://litellm:4000/v1
+      # API key for authentication (matches LiteLLM default)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-dummy-token}
+      # Model name from env (matches LiteLLM model)
+      - OPENAI_MODEL=${LLM_MODEL_NAME:-qwen-30b}
+      # Debug directory
+      - CPSAT_DEBUG_DIR=/tmp/what-if-cpsat-debug
+      # Disable LangSmith tracing
+      - LANGCHAIN_TRACING_V2=false
+      - LANGSMITH_TRACING=false
+    volumes:
+      - backend-debug:/tmp/what-if-cpsat-debug
+    networks:
+      - what-if-network
+    depends_on:
+      litellm:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Frontend - Next.js application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: what-if-frontend
+    environment:
+      - NODE_ENV=production
+    networks:
+      - what-if-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+
+networks:
+  what-if-network:
+    driver: bridge
+
+volumes:
+  backend-debug:

@@ -33,11 +33,122 @@ The application uses an LLM to translate user-defined formulas and constraints i
 
 ### Prerequisites
 
+**Option A: Docker (Recommended)**
+- Docker and Docker Compose installed
+- A local or remote LLM endpoint (OpenAI-compatible) running on the host
+
+**Option B: Local Development**
 - Node.js 20+ and npm (for frontend)
 - Python 3.12 and pip (for backend)
 - A local or remote LLM endpoint (OpenAI-compatible)
 
-### 1. Backend Setup
+---
+
+## Docker Setup (Recommended)
+
+The Docker setup uses a **LiteLLM sidecar pattern** to connect to an LLM server running on the host machine.
+
+### Architecture
+
+```
++-------------------+     +-------------------+     +-------------------+
+|   Frontend        | <-- |   Backend         | <-- |   LiteLLM Sidecar |
+|   (Next.js:3000)  |     |   (FastAPI:8000)  |     |   (:4000)         |
++-------------------+     +-------------------+     +-------------------+
+                                                        |
+                                                        | HTTP
+                                                        v
+                                         +--------------------------+
+                                         |  Host LLM Server        |
+                                         |  (host.docker.internal) |
+                                         +--------------------------+
+```
+
+### 1. Configure Environment Variables
+
+Copy and customize the Docker environment file:
+
+```bash
+cp .env.docker .env
+```
+
+Edit `.env` to match your LLM server configuration:
+
+```bash
+# Model name referenced by backend
+LLM_MODEL_NAME=qwen-30b
+
+# Model path on host LLM server (e.g., vLLM)
+LLM_MODEL_PATH=openai//models/Qwen/Qwen3-30B-A3B-Instruct-FP8
+
+# API base URL of LLM server running on host
+LLM_API_BASE=http://host.docker.internal:8000/v1
+
+# API key (can be dummy-key for local servers)
+OPENAI_API_KEY=sk-dummy-token
+```
+
+### 2. Build and Run
+
+```bash
+# Build all services
+docker-compose build
+
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+```
+
+The application will be available at `http://localhost:3000`
+
+### 3. Docker Services
+
+| Service | Description | Ports |
+|---------|-------------|-------|
+| `frontend` | Next.js application | `3000:3000` |
+| `backend` | FastAPI with CP-SAT | - |
+| `litellm` | LiteLLM sidecar proxy | - |
+
+### 4. Common Docker Commands
+
+```bash
+# Stop all services
+docker-compose down
+
+# Rebuild a specific service
+docker-compose build backend
+docker-compose up -d backend
+
+# View logs for specific service
+docker-compose logs -f backend
+
+# Access backend debug volume (CP-SAT configs)
+docker-compose exec backend ls -la /tmp/what-if-cpsat-debug/
+
+# Clean up volumes
+docker-compose down -v
+```
+
+### 5. Troubleshooting Docker
+
+**LiteLLM cannot connect to host LLM:**
+- Ensure host's LLM server is running on the configured port (default 8000)
+- On Linux, you may need to use `--add-host=host.docker.internal:host-gateway` in docker-compose
+
+**Frontend cannot reach backend:**
+- Ensure services are on the same Docker network (`what-if-network`)
+- Check backend logs: `docker-compose logs backend`
+
+**Build errors:**
+- Clear Docker cache: `docker-compose build --no-cache`
+
+---
+
+## Local Development Setup
+
+### Backend Setup
 
 ```bash
 cd backend
@@ -45,12 +156,11 @@ cd backend
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env file
-cat > .env << EOF
-OPENAI_BASE_URL=http://localhost:4000/v1
-OPENAI_MODEL=Qwen3-30B-A3B-Instruct-FP8
-OPENAI_API_KEY=dummy-key
-EOF
+# Create .env file from example
+cp .env.example .env
+
+# Edit .env with your LLM configuration
+nano .env
 
 # Start development server
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -58,7 +168,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 The backend will be available at `http://localhost:8000`
 
-### 2. Frontend Setup
+### Frontend Setup
 
 ```bash
 cd frontend
@@ -72,7 +182,7 @@ npm run dev
 
 The frontend will be available at `http://localhost:3000`
 
-### 3. Access the Application
+### Access the Application
 
 Open `http://localhost:3000` in your browser to start using the What-If Analysis Tool.
 
@@ -152,16 +262,23 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 ```
 what-if-optimization/
-├── frontend/           # Next.js frontend application
+├── docker-compose.yml          # Docker Compose configuration
+├── litellm_config.yaml         # LiteLLM sidecar configuration
+├── .env.docker                 # Docker environment template
+├── frontend/                   # Next.js frontend application
+│   ├── Dockerfile             # Frontend Dockerfile
+│   ├── .dockerignore          # Frontend Docker ignore patterns
 │   ├── app/
-│   │   ├── components/  # React components
-│   │   ├── lib/        # Utilities and constants
-│   │   └── types/      # TypeScript types
-└── backend/            # FastAPI backend application
-    ├── api/            # API endpoints
-    ├── services/       # Business logic
-    ├── models.py       # Pydantic models
-    └── main.py        # FastAPI entry point
+│   │   ├── components/        # React components
+│   │   ├── lib/              # Utilities and constants
+│   │   └── types/            # TypeScript types
+└── backend/                   # FastAPI backend application
+    ├── Dockerfile            # Backend Dockerfile
+    ├── .dockerignore         # Backend Docker ignore patterns
+    ├── api/                  # API endpoints
+    ├── services/             # Business logic
+    ├── models.py             # Pydantic models
+    └── main.py              # FastAPI entry point
 ```
 
 ## API Endpoints
