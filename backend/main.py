@@ -7,6 +7,20 @@ import logging
 os.environ["LANGCHAIN_TRACING_V2"] = "false"
 os.environ["LANGSMITH_TRACING"] = "false"
 
+# LangChain compatibility patch:
+# Some langchain-core versions still read `langchain.verbose` / `langchain.debug`
+# from the top-level `langchain` module. Ensure those attributes exist.
+try:
+    import langchain  # type: ignore
+
+    if not hasattr(langchain, "verbose"):
+        langchain.verbose = False  # type: ignore[attr-defined]
+    if not hasattr(langchain, "debug"):
+        langchain.debug = False  # type: ignore[attr-defined]
+except Exception:
+    # Keep startup resilient even if langchain package shape differs.
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
