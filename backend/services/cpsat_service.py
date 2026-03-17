@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import os
+import tempfile
 from datetime import datetime
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, TypedDict
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 DEBUG_DIR = os.getenv(
     "CPSAT_DEBUG_DIR",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "what-if-cpsat-debug")),
+    os.path.join(tempfile.gettempdir(), "what-if-cpsat-debug"),
 )
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
@@ -244,11 +245,7 @@ class CPSatService:
             portfolio_vars: Dict[str, Dict[str, Any]] = {}
 
             # 1) Row inputs
-            self._debug("## Row Input Variables")
             for row_input in config.row_inputs:
-                self._debug(
-                    f"- definition: {row_input.name_prefix}, min={row_input.min_value}, max={row_input.max_value}"
-                )
                 row_vars[row_input.name_prefix] = {}
                 for index, row in df.iterrows():
                     idx = int(index)
@@ -271,11 +268,7 @@ class CPSatService:
                         )
 
             # 2) Row intermediates
-            self._debug("## Row Intermediate Variables")
             for row_inter in config.row_intermediates:
-                self._debug(
-                    f"- definition: {row_inter.name_prefix}, formula={self._terms_to_text(row_inter.terms)}"
-                )
                 row_vars[row_inter.name_prefix] = {}
                 for index, row in df.iterrows():
                     idx = int(index)
@@ -308,14 +301,8 @@ class CPSatService:
                         )
 
             # 3) Portfolio variables
-            self._debug("## Portfolio Intermediate Variables (created in CP-SAT)")
             for p_var in config.portfolio_variables:
                 p_name = p_var.portfolio_name
-                self._debug(
-                    f"- definition: {p_name}, aggregate={p_var.aggregate_function}, "
-                    f"source={p_var.source_row_variable}, group_by={p_var.group_by_columns}, "
-                    f"if_condition={_model_dump(p_var.if_condition) if p_var.if_condition else None}"
-                )
                 portfolio_vars[p_name] = {}
 
                 filtered_df = self._apply_if_condition(df, p_var.if_condition)
@@ -343,7 +330,6 @@ class CPSatService:
                         for idx in group_df.index
                         if p_var.source_row_variable in row_vars and int(idx) in row_vars[p_var.source_row_variable]
                     ]
-                    target_names = [v.Name() if hasattr(v, "Name") else str(v) for v in target_vars]
 
                     target_names = [f"{p_var.source_row_variable}_{idx}" for idx in group_df.index if p_var.source_row_variable in row_vars and int(idx) in row_vars[p_var.source_row_variable]]
 
@@ -388,16 +374,9 @@ class CPSatService:
                             )
                     else:
                         raise ValueError(f"Unsupported aggregate function: {p_var.aggregate_function}")
-            self._debug("")
 
             # 4) Constraints
-            self._debug("## Constraints")
             for constraint in config.constraints:
-                self._debug(
-                    f"- definition: {constraint.description} :: "
-                    f"{self._terms_to_text(constraint.left_terms)} {constraint.operator} "
-                    f"{self._terms_to_text(constraint.right_terms)}"
-                )
                 self._add_config_constraint(
                     model=model,
                     constraint=constraint,
@@ -406,7 +385,6 @@ class CPSatService:
                     row_vars=row_vars,
                     portfolio_vars=portfolio_vars,
                 )
-            self._debug("")
 
             # 5) Objective
             objective_expr, objective_factor = self._build_objective_expr(
@@ -415,13 +393,6 @@ class CPSatService:
                 scenario_params=scenario_params,
                 row_vars=row_vars,
                 portfolio_vars=portfolio_vars,
-            )
-            self._debug("## Objective")
-            self._debug(
-                f"- definition: direction={config.objective.direction}, terms={self._terms_to_text(config.objective.terms)}"
-            )
-            self._debug(
-                f"- materialized: {objective_expr} (factor={objective_factor}, SCALE={SCALE})"
             )
 
             objective_debug = {
@@ -433,7 +404,6 @@ class CPSatService:
                 model.Maximize(objective_expr)
             else:
                 model.Minimize(objective_expr)
-            self._debug("")
 
             # 6) Solve
             status = solver.Solve(model)
@@ -461,7 +431,6 @@ class CPSatService:
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 error_msg = f"Solver status: {status_name}"
                 save_error_context("execute_failed", error_msg)
-                save_debug_text("model_debug", self._debug_lines)
                 return {
                     "success": False,
                     "output": status_name,
@@ -473,9 +442,6 @@ class CPSatService:
 
             objective_value = float(solver.ObjectiveValue()) / float(objective_factor * SCALE)
             variables = self._collect_solution_values(solver, row_vars, portfolio_vars)
-            self._debug(f"- objective_value: {objective_value}")
-            self._debug(f"- solved_variable_count: {len(variables)}")
-            save_debug_text("model_debug", self._debug_lines)
 
             return {
                 "success": True,
@@ -694,9 +660,6 @@ class CPSatService:
         self._add_expr(delta, left, sign=1)
         self._add_expr(delta, right, sign=-1)
         materialized, _ = self._materialize_expr(delta)
-        self._debug(
-            f"  - model.Add ({source}): {self._expr_to_text(left)} {operator} {self._expr_to_text(right)}"
-        )
         if operator == "==":
             model.Add(materialized == 0)
         elif operator == "<=":
