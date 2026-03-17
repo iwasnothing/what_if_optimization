@@ -76,21 +76,84 @@ DataFrame Columns and Types:
 Scenario Parameters:
 {scenario_parameters}
 
+### CRITICAL SYNTAX DISTINCTION:
+The user formulas use TWO DIFFERENT syntax patterns:
+
+1. **{{VariableName}}** - Decision variables (can change during optimization)
+   - Example: {{staff_count}}, {{units}}, {{profit}}
+   - These become CP-SAT variables that the solver optimizes
+
+2. **(ColumnName)** - DataFrame column constants (fixed values from data)
+   - Example: (price_per_unit), (cost_rate), (quantity)
+   - These are treated as CONSTANT values, NOT variables
+   - When multiplied with a variable: {{variable}} * (column) → variable with column as coefficient
+
 ### Rules for Translation:
 1. Break down all formulas into linear `Term` objects (sum of [variable/column/parameter * coefficient]).
 2. Do not attempt to scale floats in the JSON. The backend execution engine will automatically apply scaling.
-3. Map [name] tags from user formulas to the correct `term_type` - CHECK ALL SOURCES FIRST:
-   - "parameter": scenario parameter (check scenario_parameters list)
-   - "row_input": row-level input variable prefix (check row_level_input_variables)
-   - "row_intermediate": row-level intermediate variable prefix (check row_level_intermediate_variables)
-   - "portfolio_var": portfolio variable name (MUST be defined in portfolio_variables section)
-   - "column": dataframe column (only if NOT found in any other category)
-   - "constant": numeric constant
+3. Map user formula syntax to the correct `term_type`:
 
-IMPORTANT: When translating formulas, always check row_level_input_variables and row_level_intermediate_variables FIRST before assuming a term is a "column".
-Example: Formula "[staff_count] * [cost_rate_per_resource]" becomes:
-- First term: term_type="row_input", name_or_value="staff_count" (since staff_count is in row_level_input_variables)
-- Second term: term_type="column", name_or_value="cost_rate_per_resource" (since it's a dataframe column)
+   **For {{VariableName}} syntax:**
+   - "row_input": if name matches row_level_input_variables
+   - "row_intermediate": if name matches row_level_intermediate_variables
+   - "portfolio_var": if name matches portfolio_variables (MUST be defined in portfolio_variables section)
+   - "parameter": if name matches scenario_parameters
+
+   **For (ColumnName) syntax:**
+   - "column": ALWAYS treat as a constant term (dataframe column value)
+   - This is used as a COEFFICIENT when multiplied with a variable
+
+   - "constant": numeric constants (plain numbers in formula)
+
+IMPORTANT SYNTAX EXAMPLES:
+- "{{staff_count}}" → term_type="row_input", name_or_value="staff_count"
+- "{{profit}}" (if profit is a row_intermediate) → term_type="row_intermediate", name_or_value="profit"
+- "{{budget}}" (if budget is a parameter) → term_type="parameter", name_or_value="budget"
+- "(price_per_unit)" → term_type="column", name_or_value="price_per_unit"
+- "100" → term_type="constant", name_or_value="100"
+
+### FORMULA TRANSLATION RULES:
+
+CRITICAL: Distinguish between ADDITION and MULTIPLICATION carefully. Check the operator in the user's formula.
+
+For ADDITION/SUBTRACTION formulas like "{{A}} + {{B}} - {{C}}":
+- Create ONE term for each variable/column/parameter with coefficient 1.0
+- Example: "{{staff_count}} + {{fixed_cost}}" becomes TWO terms:
+  - term_type="row_input", name_or_value="staff_count", coefficient=1.0
+  - term_type="row_input", name_or_value="fixed_cost", coefficient=1.0
+
+For MULTIPLICATION formulas with numeric constant like "{{variable}} * NUMBER" or "NUMBER * {{variable}}":
+- Create ONE term with the variable and NUMBER as the coefficient
+- Example: "{{staff_count}} * 12000" becomes ONE term:
+  - term_type="row_input", name_or_value="staff_count", coefficient=12000.0
+- Example: "8500 * {{staff_count}}" also becomes ONE term:
+  - term_type="row_input", name_or_value="staff_count", coefficient=8500.0
+
+For MULTIPLICATION formulas with COLUMN constant like "{{variable}} * (column)" or "(column) * {{variable}}":
+- Create ONE term where the variable is the name and column is the coefficient
+- Example: "{{staff_count}} * (cost_rate_per_resource)" becomes ONE term:
+  - term_type="row_input", name_or_value="staff_count", coefficient="cost_rate_per_resource" (column name)
+  - Note: The backend will substitute the column value per-row, creating: staff_count[i] * cost_rate_per_resource[i]
+- Example: "(price_per_unit) * {{quantity}}" becomes:
+  - term_type="row_input", name_or_value="quantity", coefficient="price_per_unit"
+
+For MULTIPLICATION formulas with parameter like "{{variable}} * {{parameter}}":
+- Create ONE term where the variable is the name and parameter is the coefficient
+- Example: "{{staff_count}} * {{hourly_rate}}" becomes ONE term:
+  - term_type="row_input", name_or_value="staff_count", coefficient="hourly_rate" (parameter name)
+
+COMMON MISTAKE TO AVOID:
+- If formula is "{{staff_count}} * 12000" (MULTIPLICATION with operator *), do NOT create TWO terms.
+- DO NOT generate: staff_count with coefficient 1.0 AND constant 12000 (this represents ADDITION: staff_count + 12000)
+- CORRECT: Generate ONE term: staff_count with coefficient 12000.0 (this represents MULTIPLICATION: 12000 * staff_count)
+
+COST CALCULATION EXAMPLES:
+- "{{quantity}} * (price)" → ONE term: quantity with coefficient="price"
+- "{{units}} * 12.50" → ONE term: units with coefficient=12.50
+- "5000 * {{hours}}" → ONE term: hours with coefficient=5000.0
+- "{{profit}} = {{revenue}} - {{cost}}" → TWO terms in row_intermediate definition:
+  - revenue with coefficient=1.0
+  - cost with coefficient=-1.0
 
 ### CRITICAL RULES FOR VARIABLE CREATION:
 You MUST create THREE types of variables in your output:

@@ -287,6 +287,7 @@ async def run_scenario(request: RunScenarioRequest):
                 logger.info(f"    {var_name}: {var_value}")
             if len(workflow_result['variable_values']) > 10:
                 logger.info(f"    ... and {len(workflow_result['variable_values']) - 10} more variables")
+            logger.info(f"  Debug file: {workflow_result.get('debug_filepath', 'Not saved')}")
             logger.info("=" * 100)
             logger.info("RUN SCENARIO COMPLETED SUCCESSFULLY")
             logger.info("=" * 100)
@@ -309,6 +310,7 @@ async def run_scenario(request: RunScenarioRequest):
             logger.error("OPTIMIZATION FAILED - CP-SAT MODE")
             logger.error("=" * 100)
             logger.error(f"  Error: {workflow_result['error']}")
+            logger.error(f"  Debug file: {workflow_result.get('debug_filepath', 'Not saved')}")
             logger.error("=" * 100)
 
             raise HTTPException(status_code=500, detail=workflow_result.get('error', 'Unknown error'))

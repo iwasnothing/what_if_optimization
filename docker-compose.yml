@@ -39,7 +39,7 @@ services:
       - LANGCHAIN_TRACING_V2=false
       - LANGSMITH_TRACING=false
     volumes:
-      - backend-debug:/tmp/what-if-cpsat-debug
+      - ./backend-debug:/tmp/what-if-cpsat-debug
     networks:
       - what-if-network
     depends_on:

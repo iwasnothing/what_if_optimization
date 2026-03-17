@@ -216,10 +216,10 @@ export default function FormulaTab({
                     })
                   }
                   className={`${glassInput} w-full text-xs font-mono`}
-                  placeholder="e.g., [Price] * [Quantity] + [TaxRate] * 100"
+                  placeholder="e.g., {Price} * (Quantity) + {TaxRate} * 100"
                 />
                 <p className="text-[10px] text-white/40 mt-1">
-                  Operators: +, -, *, () · Boolean variables treated as 0 or 1
+                  Variables: {"{Variable}"} · Constants: (ColumnName) · Operators: +, -, *, /
                 </p>
                 {availableVariables.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
@@ -230,11 +230,30 @@ export default function FormulaTab({
                         onClick={() =>
                           setEditingRowIntermediate({
                             ...editingRowIntermediate,
-                            formula: (editingRowIntermediate.formula || "") + `[${v}]`,
+                            formula: (editingRowIntermediate.formula || "") + `{${v}}`,
                           })
                         }
                       >
                         {v}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {csvData?.columns && csvData.columns.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <span className="text-[9px] text-white/40 italic">Column constants:</span>
+                    {csvData.columns.map((col) => (
+                      <span
+                        key={col}
+                        className="px-1.5 py-0.5 bg-blue-500/10 rounded text-[9px] text-blue-300 cursor-pointer hover:bg-blue-500/20"
+                        onClick={() =>
+                          setEditingRowIntermediate({
+                            ...editingRowIntermediate,
+                            formula: (editingRowIntermediate.formula || "") + `(${col})`,
+                          })
+                        }
+                      >
+                        {col}
                       </span>
                     ))}
                   </div>

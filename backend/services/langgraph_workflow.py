@@ -1,7 +1,7 @@
 """LangGraph workflow for structured CPSatConfig generation and safe execution."""
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from typing_extensions import TypedDict
 from langgraph.graph import END, StateGraph
@@ -25,6 +25,7 @@ class WorkflowState(TypedDict):
     max_retries: int
     final_variable_values: Dict[str, Any]
     final_objective_value: float
+    debug_filepath: Optional[str]
 
 
 def create_langgraph_workflow(llm_service: LLMService, cpsat_service: CPSatService) -> StateGraph:
@@ -45,12 +46,14 @@ def create_langgraph_workflow(llm_service: LLMService, cpsat_service: CPSatServi
                 output='',
                 variable_values={},
                 objective_value=None,
-                error='Not yet executed'
+                error='Not yet executed',
+                debug_filepath=None,
             ),
             'retry_count': 0,
             'max_retries': 3,
             'final_variable_values': {},
             'final_objective_value': 0.0,
+            'debug_filepath': None,
         }
 
     def generate_config(state: WorkflowState) -> WorkflowState:
@@ -87,6 +90,7 @@ def create_langgraph_workflow(llm_service: LLMService, cpsat_service: CPSatServi
             'execution_result': result,
             'final_variable_values': result['variable_values'],
             'final_objective_value': result['objective_value'] or 0.0,
+            'debug_filepath': result.get('debug_filepath'),
         }
 
     def handle_failure(state: WorkflowState) -> WorkflowState:
@@ -103,6 +107,7 @@ def create_langgraph_workflow(llm_service: LLMService, cpsat_service: CPSatServi
                 variable_values={},
                 objective_value=None,
                 error=failure_error,
+                debug_filepath=state.get('debug_filepath'),
             ),
             'final_variable_values': {},
             'final_objective_value': 0.0,
@@ -167,12 +172,14 @@ def run_cpsat_optimization(config: Any, scenario: Any, csv_data: Any) -> Dict[st
             output='',
             variable_values={},
             objective_value=None,
-            error='Not executed'
+            error='Not executed',
+            debug_filepath=None,
         ),
         'retry_count': 0,
         'max_retries': 3,
         'final_variable_values': {},
         'final_objective_value': 0.0,
+        'debug_filepath': None,
     }
     try:
         app = workflow.compile()
@@ -182,6 +189,7 @@ def run_cpsat_optimization(config: Any, scenario: Any, csv_data: Any) -> Dict[st
             'variable_values': result['final_variable_values'],
             'objective_value': result['final_objective_value'],
             'error': result['execution_result'].get('error') if not result['execution_result']['success'] else None,
+            'debug_filepath': result.get('debug_filepath'),
         }
     except Exception as e:
         logger.error(f"Workflow error: {e}", exc_info=True)
@@ -190,4 +198,5 @@ def run_cpsat_optimization(config: Any, scenario: Any, csv_data: Any) -> Dict[st
             'variable_values': {},
             'objective_value': 0.0,
             'error': str(e),
+            'debug_filepath': None,
         }

@@ -19,6 +19,7 @@ import ConstraintTab from "./components/ConstraintTab";
 import ObjectiveTab from "./components/ObjectiveTab";
 import ManipulationGrid from "./components/ManipulationGrid";
 import ImpactViewer from "./components/ImpactViewer";
+import ResultsDashboard from "./components/ResultsDashboard";
 import { parseCSV } from "./lib/helpers";
 import { glassPanel } from "./lib/constants";
 
@@ -53,6 +54,7 @@ export default function App() {
   const [config, setConfig] = useState<ConfigState>(initialConfig);
   const [logs, setLogs] = useState<LogEntry[]>(initialLogs);
   const [scenarios, setScenarios] = useState<Scenario[]>(initialScenarios);
+  const [selectedScenarioForResults, setSelectedScenarioForResults] = useState<Scenario | null>(null);
 
   const addLog = useCallback((message: string) => {
     const now = new Date();
@@ -171,6 +173,17 @@ export default function App() {
     [scenarios, addLog, config, csvData]
   );
 
+  const handleViewResults = useCallback(
+    (scenario: Scenario) => {
+      setSelectedScenarioForResults(scenario);
+    },
+    []
+  );
+
+  const handleCloseResults = useCallback(() => {
+    setSelectedScenarioForResults(null);
+  }, []);
+
   // Get latest optimization result for ImpactViewer
   const latestResult = scenarios
     .filter((s) => s.isCompleted && s.optimizationResult)
@@ -279,6 +292,7 @@ export default function App() {
               onCreateScenario={handleCreateScenario}
               onUpdateScenario={handleUpdateScenario}
               onRunOptimization={handleRunOptimization}
+              onViewResults={handleViewResults}
             />
           </div>
 
@@ -294,6 +308,16 @@ export default function App() {
 
         <CustomScrollbar />
       </div>
+
+      {/* Results Dashboard Modal */}
+      {selectedScenarioForResults && csvData && (
+        <ResultsDashboard
+          csvData={csvData}
+          config={config}
+          scenario={selectedScenarioForResults}
+          onClose={handleCloseResults}
+        />
+      )}
     </div>
   );
 }

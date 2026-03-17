@@ -1,4 +1,4 @@
-import { Play, CheckCircle2, Clock, FileText } from "lucide-react";
+import { Play, CheckCircle2, Clock, FileText, RotateCcw } from "lucide-react";
 import { glassPanel, glassButton, glassInput, glassCard } from "../lib/constants";
 import type { ConfigState, Scenario } from "../types";
 
@@ -8,6 +8,7 @@ interface ManipulationGridProps {
   onCreateScenario: () => void;
   onUpdateScenario: (id: number, updates: Partial<Scenario>) => void;
   onRunOptimization: (id: number) => void;
+  onViewResults: (scenario: Scenario) => void;
 }
 
 export default function ManipulationGrid({
@@ -16,6 +17,7 @@ export default function ManipulationGrid({
   onCreateScenario,
   onUpdateScenario,
   onRunOptimization,
+  onViewResults,
 }: ManipulationGridProps) {
   return (
     <section className={`${glassPanel} flex-1 flex flex-col min-w-[800px]`}>
@@ -52,6 +54,7 @@ export default function ManipulationGrid({
                   scenarios={scenarios}
                   onUpdateScenario={onUpdateScenario}
                   onRunOptimization={onRunOptimization}
+                  onViewResults={onViewResults}
                 />
               </table>
             </div>
@@ -95,6 +98,7 @@ interface TableBodyProps {
   scenarios: Scenario[];
   onUpdateScenario: (id: number, updates: Partial<Scenario>) => void;
   onRunOptimization: (id: number) => void;
+  onViewResults: (scenario: Scenario) => void;
 }
 
 function TableBody({
@@ -102,6 +106,7 @@ function TableBody({
   scenarios,
   onUpdateScenario,
   onRunOptimization,
+  onViewResults,
 }: TableBodyProps) {
   return (
     <tbody className="divide-y divide-white/5 bg-transparent">
@@ -163,12 +168,21 @@ function TableBody({
                     Running...
                   </div>
                 ) : scenario.isCompleted ? (
-                  <div
-                    className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs"
-                  >
-                    <CheckCircle2 className="w-3 h-3" />
-                    Completed
-                  </div>
+                  <>
+                    <div
+                      className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs"
+                    >
+                      <CheckCircle2 className="w-3 h-3" />
+                      Completed
+                    </div>
+                    <button
+                      onClick={() => onRunOptimization(scenario.id)}
+                      className={`${glassButton} text-xs py-1.5 bg-purple-500/20 border-purple-500/50 hover:bg-purple-500/30`}
+                      title="Re-run scenario"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                    </button>
+                  </>
                 ) : (
                   <button
                     onClick={() => onRunOptimization(scenario.id)}
@@ -180,6 +194,7 @@ function TableBody({
 
                 {scenario.isCompleted && scenario.optimizationResult && (
                   <button
+                    onClick={() => onViewResults(scenario)}
                     className={`${glassButton} text-xs py-1.5 bg-blue-500/20 border-blue-500/50 hover:bg-blue-500/30`}
                   >
                     Results

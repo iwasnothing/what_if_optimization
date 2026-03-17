@@ -139,9 +139,9 @@ class Term(BaseModel):
     name_or_value: Union[str, float] = Field(
         description="The prefix name, column name, parameter name, or constant value."
     )
-    coefficient: float = Field(
+    coefficient: Union[float, str] = Field(
         default=1.0,
-        description="Multiplier for this term (e.g., 1.0, -1.0, 0.5).",
+        description="Multiplier for this term: numeric constant (e.g., 1.0, 5.0, -0.5) or column/parameter name for dynamic per-row coefficient (e.g., 'cost_rate', 'tax_rate').",
     )
 
 
