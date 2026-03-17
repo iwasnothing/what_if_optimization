@@ -21,13 +21,17 @@ class OptimizationService:
     def evaluate_formula(formula: str, variable_context: Dict[str, Any]) -> float:
         """
         Safely evaluate a formula with variable substitution.
-        Supports basic arithmetic operations and variable references like [VariableName].
+        Supports basic arithmetic operations and variable references like {VariableName}.
+        NOTE: This is legacy mode - CP-SAT mode uses structured Term objects instead.
         """
-        # Replace [VariableName] with actual values
+        # Replace {VariableName} with actual values
         substituted_formula = formula
         for var_name, var_value in variable_context.items():
-            pattern = r"\[" + re.escape(str(var_name)) + r"\]"
+            pattern = r"\{" + re.escape(str(var_name)) + r"\}"
             substituted_formula = re.sub(pattern, str(var_value), substituted_formula)
+
+        # Replace (ColumnName) with 0 (columns are constants in CP-SAT, not variables)
+        substituted_formula = re.sub(r"\([^)]+\)", "0", substituted_formula)
 
         # Evaluate the formula safely (only allow basic math operations)
         allowed_chars = set("0123456789+-*/(). ")

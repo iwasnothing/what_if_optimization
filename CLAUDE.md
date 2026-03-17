@@ -312,14 +312,32 @@ All components use these classes for visual consistency.
 
 **CORS:** Backend is configured to allow requests from `http://localhost:3000` and `http://localhost:3001`.
 
-### Formula Evaluation
+### Formula Syntax
 
-Formulas use `[VariableName]` syntax for variable references:
+Formulas use two distinct syntax patterns:
+
+**Decision Variables:** `{VariableName}`
+- These are CP-SAT decision variables that can change during optimization
+- Enclosed in curly braces: `{staff_count}`, `{units}`, `{profit}`
+- Can be: row-level input variables, row-level intermediate variables, scenario parameters, or portfolio variables
+
+**DataFrame Constants:** `(ColumnName)`
+- These are fixed values from the uploaded CSV data
+- Enclosed in parentheses: `(price_per_unit)`, `(quantity)`, `(cost_rate)`
+- Treated as constant coefficients when multiplied with variables
+- Example: `{staff_count} * (cost_rate)` becomes a variable with a column-specific coefficient
+
+**Formula Translation:**
 - Row-level intermediate variables can reference scenario parameters and row-level input variables
 - Portfolio-level variables aggregate row-level intermediate variables
 - Only basic arithmetic operations are supported (addition, subtraction, multiplication, division)
+- The LLM translates formulas into linear `Term` objects for CP-SAT
 
-Example: `[Revenue] - [Cost]` would calculate profit.
+Examples:
+- `{Revenue} - {Cost}` → profit calculation
+- `{staff_count} * (hourly_rate)` → cost with per-row coefficient
+- `{quantity} * {price_per_unit} + {shipping_cost}` → total cost
+- `{units} * 12.50` → variable with numeric coefficient
 
 **Note:** The CP-SAT mode converts formulas to structured `Term` objects in `CPSatConfig`, not formula evaluation. Formula evaluation is only used in legacy mode (`/api/run_scenario_legacy`).
 

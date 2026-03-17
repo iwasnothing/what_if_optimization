@@ -56,14 +56,88 @@ def save_error_context(stage: str, error_message: str, details: Optional[Dict[st
     return filepath
 
 
-def save_debug_text(stage: str, lines: List[str]) -> str:
+def save_execution_debug(
+    variables: Dict[str, List[Dict[str, Any]]],
+    constraints: List[Dict[str, Any]],
+    objective: Dict[str, Any],
+    solver_status: str,
+    solver_result: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Save detailed execution debug information including all variables and constraints."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename = f"cpsat_{stage}_{timestamp}.txt"
+    filename = f"cpsat_execution_debug_{timestamp}.txt"
     filepath = os.path.join(DEBUG_DIR, filename)
     with open(filepath, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+        f.write(f"# CP-SAT Execution Debug - {timestamp}\n")
+        f.write(f"# Generated at: {datetime.now().isoformat()}\n")
+        f.write(f"# {'=' * 75}\n\n")
+
+        # Variables section
+        f.write("# VARIABLES\n")
+        f.write(f"# {'=' * 75}\n\n")
+        total_vars = 0
+        for var_type, var_list in variables.items():
+            f.write(f"## {var_type.upper()} ({len(var_list)} variables)\n")
+            for var_info in var_list:
+                f.write(f"  Name: {var_info['name']}\n")
+                f.write(f"    Type: {var_info['type']}\n")
+                if 'bounds' in var_info:
+                    f.write(f"    Bounds: [{var_info['bounds'][0]}, {var_info['bounds'][1]}]\n")
+                if 'definition' in var_info:
+                    f.write(f"    Definition: {var_info['definition']}\n")
+                if 'group_key' in var_info:
+                    f.write(f"    Group Key: {var_info['group_key']}\n")
+                if 'row_index' in var_info:
+                    f.write(f"    Row Index: {var_info['row_index']}\n")
+                total_vars += 1
+            f.write("\n")
+
+        f.write(f"Total Variables: {total_vars}\n\n")
+
+        # Constraints section
+        f.write(f"# CONSTRAINTS\n")
+        f.write(f"# {'=' * 75}\n\n")
+        for i, constraint in enumerate(constraints, 1):
+            f.write(f"## Constraint {i}: {constraint['description']}\n")
+            f.write(f"  Type: {constraint['type']}\n")
+            f.write(f"  Expression: {constraint['expression']}\n")
+            if 'group_key' in constraint:
+                f.write(f"  Group Key: {constraint['group_key']}\n")
+            if 'row_index' in constraint:
+                f.write(f"  Row Index: {constraint['row_index']}\n")
+            f.write("\n")
+
+        f.write(f"Total Constraints: {len(constraints)}\n\n")
+
+        # Objective section
+        f.write(f"# OBJECTIVE\n")
+        f.write(f"# {'=' * 75}\n\n")
+        f.write(f"Direction: {objective['direction']}\n")
+        f.write(f"Expression: {objective['expression']}\n\n")
+
+        # Solver results
+        f.write(f"# SOLVER RESULTS\n")
+        f.write(f"# {'=' * 75}\n\n")
+        f.write(f"Status: {solver_status}\n")
+        if solver_result:
+            if 'objective_value' in solver_result:
+                f.write(f"Objective Value: {solver_result['objective_value']}\n")
+            if 'num_booleans' in solver_result:
+                f.write(f"Num Booleans: {solver_result['num_booleans']}\n")
+            if 'num_branches' in solver_result:
+                f.write(f"Num Branches: {solver_result['num_branches']}\n")
+            if 'wall_time' in solver_result:
+                f.write(f"Wall Time: {solver_result['wall_time']}s\n")
         f.write("\n")
-    logger.info(f"Saved CP-SAT debug text to: {filepath}")
+
+        # Variable values (if available)
+        if solver_result and 'variable_values' in solver_result:
+            f.write(f"# VARIABLE VALUES (solution)\n")
+            f.write(f"# {'=' * 75}\n\n")
+            for var_name, value in solver_result['variable_values'].items():
+                f.write(f"{var_name} = {value}\n")
+
+    logger.info(f"Saved CP-SAT execution debug to: {filepath}")
     return filepath
 
 
@@ -73,6 +147,12 @@ class CPSatExecutionResult(TypedDict):
     variable_values: Dict[str, Any]
     objective_value: Optional[float]
     error: Optional[str]
+    debug_filepath: Optional[str]
+
+
+class _DebugTracker(TypedDict):
+    variables: Dict[str, List[Dict[str, Any]]]
+    constraints: List[Dict[str, Any]]
 
 
 class _ExprParts(TypedDict):
@@ -83,35 +163,59 @@ class _ExprParts(TypedDict):
 class CPSatService:
     """Service for deterministic CP-SAT execution from structured CPSatConfig."""
 
-    def __init__(self, max_retries: int = 3):
+    def __init__(self, max_retries: int = 3, enable_debug_logging: bool = True):
         self.max_retries = max_retries
-        self._debug_lines: List[str] = []
+        self.enable_debug_logging = enable_debug_logging
+        self._debug: _DebugTracker = {"variables": {}, "constraints": []}
 
-    def _debug(self, message: str) -> None:
-        self._debug_lines.append(message)
+    def _reset_debug_tracker(self) -> None:
+        """Reset the debug tracker for a new execution."""
+        self._debug = {"variables": {}, "constraints": []}
 
-    def _terms_to_text(self, terms: List[Term]) -> str:
-        parts: List[str] = []
-        for term in terms:
-            coeff = term.coefficient
-            base = f"{term.term_type}:{term.name_or_value}"
-            if coeff == 1:
-                parts.append(base)
-            else:
-                parts.append(f"({coeff})*{base}")
-        return " + ".join(parts) if parts else "0"
+    def _log_variable(self, var_type: str, name: str, **kwargs: Any) -> None:
+        """Log a variable creation."""
+        if var_type not in self._debug["variables"]:
+            self._debug["variables"][var_type] = []
+        var_info = {"name": name, "type": var_type}
+        var_info.update(kwargs)
+        self._debug["variables"][var_type].append(var_info)
+        logger.debug(f"Created {var_type} variable: {name} {kwargs}")
 
-    def _expr_to_text(self, expr: _ExprParts) -> str:
-        parts: List[str] = []
+    def _log_constraint(
+        self,
+        constraint_type: str,
+        description: str,
+        expression: str,
+        **kwargs: Any,
+    ) -> None:
+        """Log a constraint addition."""
+        constraint = {
+            "type": constraint_type,
+            "description": description,
+            "expression": expression,
+        }
+        constraint.update(kwargs)
+        self._debug["constraints"].append(constraint)
+        logger.debug(f"Added {constraint_type} constraint: {description} - {expression}")
+
+    def _format_expr_debug(self, expr: _ExprParts) -> str:
+        """Format an expression for debug output."""
+        parts = []
+        constant = expr["constant"]
+        if constant != 0:
+            parts.append(f"{constant}")
         for var, coeff in expr["coeffs"].items():
-            var_name = var.Name() if hasattr(var, "Name") else str(var)
-            if coeff == 1:
-                parts.append(var_name)
+            coeff_val = float(coeff)
+            if coeff_val == 0:
+                continue
+            var_name = getattr(var, "Name", lambda: str(var))()
+            sign = "+" if coeff_val > 0 else "-"
+            abs_coeff = abs(coeff_val)
+            if abs_coeff == 1:
+                parts.append(f"{sign} {var_name}")
             else:
-                parts.append(f"({coeff})*{var_name}")
-        if expr["constant"] != 0:
-            parts.append(str(expr["constant"]))
-        return " + ".join(parts) if parts else "0"
+                parts.append(f"{sign} {abs_coeff} * {var_name}")
+        return " ".join(parts) if parts else "0"
 
     def execute_cpsat_config(
         self,
@@ -122,15 +226,8 @@ class CPSatService:
     ) -> CPSatExecutionResult:
         spreadsheet_data = spreadsheet_data or []
         scenario_params = scenario_params or {}
-        self._debug_lines = [
-            "# CP-SAT Model Debug",
-            f"# Generated at: {datetime.now().isoformat()}",
-            f"# Debug dir: {DEBUG_DIR}",
-            "",
-            "## Scenario Parameters",
-            json.dumps(scenario_params, indent=2, ensure_ascii=True, default=str),
-            "",
-        ]
+        self._reset_debug_tracker()
+        debug_filepath: Optional[str] = None
 
         try:
             save_generated_json(_model_dump(config), stage="generated_config")
@@ -154,19 +251,24 @@ class CPSatService:
                 )
                 row_vars[row_input.name_prefix] = {}
                 for index, row in df.iterrows():
+                    idx = int(index)
                     lb = self._resolve_bound_value(row_input.min_value, row, scenario_params)
                     ub = self._resolve_bound_value(row_input.max_value, row, scenario_params)
                     if lb > ub:
                         lb, ub = ub, lb
-                    row_vars[row_input.name_prefix][int(index)] = model.NewIntVar(
+                    var = model.NewIntVar(
                         lb,
                         ub,
-                        f"{row_input.name_prefix}_{index}",
+                        f"{row_input.name_prefix}_{idx}",
                     )
-                    self._debug(
-                        f"  - created var: {row_input.name_prefix}_{index}, bounds=[{lb}, {ub}]"
-                    )
-            self._debug("")
+                    row_vars[row_input.name_prefix][idx] = var
+                    if self.enable_debug_logging:
+                        self._log_variable(
+                            "row_input",
+                            f"{row_input.name_prefix}_{idx}",
+                            bounds=(lb / SCALE, ub / SCALE),
+                            row_index=idx,
+                        )
 
             # 2) Row intermediates
             self._debug("## Row Intermediate Variables")
@@ -179,6 +281,13 @@ class CPSatService:
                     idx = int(index)
                     var = model.NewIntVar(-BIG_BOUND, BIG_BOUND, f"{row_inter.name_prefix}_{idx}")
                     row_vars[row_inter.name_prefix][idx] = var
+                    if self.enable_debug_logging:
+                        self._log_variable(
+                            "row_intermediate",
+                            f"{row_inter.name_prefix}_{idx}",
+                            bounds=(-BIG_BOUND / SCALE, BIG_BOUND / SCALE),
+                            row_index=idx,
+                        )
                     right_expr = self._build_expr_for_terms(
                         terms=row_inter.terms,
                         row_index=idx,
@@ -188,14 +297,15 @@ class CPSatService:
                         portfolio_vars=portfolio_vars,
                         group_key=None,
                     )
-                    self._add_linear_constraint(
-                        model,
-                        self._single_var_expr(var),
-                        "==",
-                        right_expr,
-                        source=f"row_intermediate[{row_inter.name_prefix}_{idx}]",
-                    )
-            self._debug("")
+                    self._add_linear_constraint(model, self._single_var_expr(var), "==", right_expr)
+                    if self.enable_debug_logging:
+                        expr_str = self._format_expr_debug(right_expr)
+                        self._log_constraint(
+                            "row_intermediate_definition",
+                            f"{row_inter.name_prefix}_{idx}",
+                            f"{row_inter.name_prefix}_{idx} == {expr_str}",
+                            row_index=idx,
+                        )
 
             # 3) Portfolio variables
             self._debug("## Portfolio Intermediate Variables (created in CP-SAT)")
@@ -219,7 +329,14 @@ class CPSatService:
                     group_key = self._normalize_group_key(raw_group_key)
                     agg_var = model.NewIntVar(-BIG_BOUND, BIG_BOUND, f"{p_name}_{group_key}")
                     portfolio_vars[p_name][group_key] = agg_var
-                    self._debug(f"  - created var: {p_name}_{group_key}")
+                    if self.enable_debug_logging:
+                        self._log_variable(
+                            "portfolio",
+                            f"{p_name}_{group_key}",
+                            bounds=(-BIG_BOUND / SCALE, BIG_BOUND / SCALE),
+                            group_key=group_key,
+                            source_variable=p_var.source_row_variable,
+                        )
 
                     target_vars = [
                         row_vars[p_var.source_row_variable][int(idx)]
@@ -228,26 +345,47 @@ class CPSatService:
                     ]
                     target_names = [v.Name() if hasattr(v, "Name") else str(v) for v in target_vars]
 
+                    target_names = [f"{p_var.source_row_variable}_{idx}" for idx in group_df.index if p_var.source_row_variable in row_vars and int(idx) in row_vars[p_var.source_row_variable]]
+
                     if not target_vars:
                         model.Add(agg_var == 0)
-                        self._debug(
-                            f"    - model.Add: {agg_var.Name()} == 0 (no target vars after filters)"
-                        )
+                        if self.enable_debug_logging:
+                            self._log_constraint(
+                                "portfolio_definition",
+                                f"{p_name}_{group_key}",
+                                f"{p_name}_{group_key} == 0",
+                                group_key=group_key,
+                            )
                     elif p_var.aggregate_function == "sum":
                         model.Add(agg_var == sum(target_vars))
-                        self._debug(
-                            f"    - model.Add: {agg_var.Name()} == sum({', '.join(target_names)})"
-                        )
+                        if self.enable_debug_logging:
+                            target_str = " + ".join(target_names)
+                            self._log_constraint(
+                                "portfolio_sum",
+                                f"{p_name}_{group_key}",
+                                f"{p_name}_{group_key} == {target_str}",
+                                group_key=group_key,
+                            )
                     elif p_var.aggregate_function == "max":
                         model.AddMaxEquality(agg_var, target_vars)
-                        self._debug(
-                            f"    - model.AddMaxEquality: {agg_var.Name()} == max({', '.join(target_names)})"
-                        )
+                        if self.enable_debug_logging:
+                            target_str = ", ".join(target_names)
+                            self._log_constraint(
+                                "portfolio_max",
+                                f"{p_name}_{group_key}",
+                                f"{p_name}_{group_key} == max({target_str})",
+                                group_key=group_key,
+                            )
                     elif p_var.aggregate_function == "min":
                         model.AddMinEquality(agg_var, target_vars)
-                        self._debug(
-                            f"    - model.AddMinEquality: {agg_var.Name()} == min({', '.join(target_names)})"
-                        )
+                        if self.enable_debug_logging:
+                            target_str = ", ".join(target_names)
+                            self._log_constraint(
+                                "portfolio_min",
+                                f"{p_name}_{group_key}",
+                                f"{p_name}_{group_key} == min({target_str})",
+                                group_key=group_key,
+                            )
                     else:
                         raise ValueError(f"Unsupported aggregate function: {p_var.aggregate_function}")
             self._debug("")
@@ -286,6 +424,11 @@ class CPSatService:
                 f"- materialized: {objective_expr} (factor={objective_factor}, SCALE={SCALE})"
             )
 
+            objective_debug = {
+                "direction": config.objective.direction,
+                "expression": f"objective_expr (factor: {objective_factor})",
+            }
+
             if config.objective.direction == "maximize":
                 model.Maximize(objective_expr)
             else:
@@ -295,8 +438,26 @@ class CPSatService:
             # 6) Solve
             status = solver.Solve(model)
             status_name = solver.StatusName(status)
-            self._debug("## Solve Result")
-            self._debug(f"- solver_status: {status_name}")
+
+            # Save debug file
+            if self.enable_debug_logging:
+                solver_result = None
+                if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                    solver_result = {
+                        "objective_value": float(solver.ObjectiveValue()) / float(objective_factor * SCALE),
+                        "num_booleans": solver.NumBooleans(),
+                        "num_branches": solver.NumBranches(),
+                        "wall_time": solver.WallTime(),
+                        "variable_values": self._collect_solution_values(solver, row_vars, portfolio_vars),
+                    }
+                debug_filepath = save_execution_debug(
+                    variables=self._debug["variables"],
+                    constraints=self._debug["constraints"],
+                    objective=objective_debug,
+                    solver_status=status_name,
+                    solver_result=solver_result,
+                )
+
             if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
                 error_msg = f"Solver status: {status_name}"
                 save_error_context("execute_failed", error_msg)
@@ -307,6 +468,7 @@ class CPSatService:
                     "variable_values": {},
                     "objective_value": None,
                     "error": error_msg,
+                    "debug_filepath": debug_filepath,
                 }
 
             objective_value = float(solver.ObjectiveValue()) / float(objective_factor * SCALE)
@@ -321,21 +483,30 @@ class CPSatService:
                 "variable_values": variables,
                 "objective_value": objective_value,
                 "error": None,
+                "debug_filepath": debug_filepath,
             }
         except Exception as e:
             error_msg = f"Execution error: {e}"
             logger.error(error_msg, exc_info=True)
             save_error_context("execute_failed", error_msg)
-            self._debug("")
-            self._debug("## Exception")
-            self._debug(f"- {error_msg}")
-            save_debug_text("model_debug", self._debug_lines)
+            # Still save debug file if possible
+            if self.enable_debug_logging and self._debug["variables"] or self._debug["constraints"]:
+                try:
+                    debug_filepath = save_execution_debug(
+                        variables=self._debug["variables"],
+                        constraints=self._debug["constraints"],
+                        objective={"direction": "unknown", "expression": "error before objective"},
+                        solver_status="error",
+                    )
+                except Exception as debug_e:
+                    logger.warning(f"Failed to save debug file after error: {debug_e}")
             return {
                 "success": False,
                 "output": "",
                 "variable_values": {},
                 "objective_value": None,
                 "error": error_msg,
+                "debug_filepath": debug_filepath,
             }
 
     def _scaled_int(self, val: Any) -> int:
@@ -438,7 +609,17 @@ class CPSatService:
         portfolio_vars: Dict[str, Dict[str, Any]],
         group_key: Optional[str],
     ) -> _ExprParts:
-        coeff = self._to_fraction(term.coefficient)
+        # Resolve coefficient: can be numeric (float/int) or string (column/parameter name)
+        coeff_value = term.coefficient
+        if isinstance(coeff_value, str):
+            # String coefficient is a column name or parameter name
+            if row is not None and coeff_value in row.index:
+                coeff_value = row[coeff_value]
+            elif coeff_value in scenario_params:
+                coeff_value = scenario_params[coeff_value]
+            else:
+                raise ValueError(f"Cannot resolve coefficient '{coeff_value}': not found in row columns or scenario parameters")
+        coeff = self._to_fraction(coeff_value)
         term_type = term.term_type
         key = term.name_or_value
         out = self._empty_expr()
@@ -506,7 +687,8 @@ class CPSatService:
         left: _ExprParts,
         operator: str,
         right: _ExprParts,
-        source: str = "constraint",
+        description: str = "linear_constraint",
+        **log_kwargs: Any,
     ) -> None:
         delta = self._empty_expr()
         self._add_expr(delta, left, sign=1)
@@ -523,6 +705,16 @@ class CPSatService:
             model.Add(materialized >= 0)
         else:
             raise ValueError(f"Unsupported operator: {operator}")
+
+        if self.enable_debug_logging:
+            left_str = self._format_expr_debug(left)
+            right_str = self._format_expr_debug(right)
+            self._log_constraint(
+                "linear",
+                description,
+                f"{left_str} {operator} {right_str}",
+                **log_kwargs,
+            )
 
     def _constraint_scope(self, terms: List[Term]) -> str:
         types = {t.term_type for t in terms}
@@ -613,7 +805,8 @@ class CPSatService:
                         left,
                         constraint.operator,
                         right,
-                        source=f"constraint[{constraint.description}] group={group_key}",
+                        description=f"portfolio_constraint_{constraint.description}",
+                        group_key=f"left:{group_key}|right:All",
                     )
                 return
             # Original validation: all portfolio vars must have same group keys
@@ -651,7 +844,8 @@ class CPSatService:
                         left,
                         constraint.operator,
                         right,
-                        source=f"constraint[{constraint.description}] group={group_key}",
+                        description=f"portfolio_constraint_{constraint.description}",
+                        group_key=group_key,
                     )
             return
 
@@ -681,7 +875,8 @@ class CPSatService:
                     left,
                     constraint.operator,
                     right,
-                    source=f"constraint[{constraint.description}] row={row_index}",
+                    description=f"row_constraint_{constraint.description}",
+                    row_index=row_index,
                 )
             return
 
@@ -708,7 +903,7 @@ class CPSatService:
             left,
             constraint.operator,
             right,
-            source=f"constraint[{constraint.description}]",
+            description=f"global_constraint_{constraint.description}",
         )
 
     def _build_objective_expr(

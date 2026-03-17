@@ -49,7 +49,7 @@ export interface RowLevelIntermediateVariable {
   id: number;
   name: string;
   description: string;
-  formula: string; // Uses [VariableName] syntax
+  formula: string; // Uses {VariableName} syntax for variables, (ColumnName) for dataframe columns
 }
 
 // Portfolio Level Intermediate Variable

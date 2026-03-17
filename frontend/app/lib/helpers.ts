@@ -49,8 +49,10 @@ export const parseCSVLine = (line: string): string[] => {
 };
 
 /**
- * Evaluate a formula with variables enclosed in []
- * Variables can be: asset variables, intermediate variables, parameters, or portfolio variables
+ * Evaluate a formula with variables enclosed in {} and columns in ()
+ * Variables: {VariableName} (decision variables)
+ * Columns: (ColumnName) (dataframe constants, treated as 0 in legacy mode)
+ * Parameters: {ParameterName} (scenario parameters)
  */
 export const evaluateFormula = (
   formula: string,
@@ -60,8 +62,8 @@ export const evaluateFormula = (
   if (!formula.trim()) return 0;
 
   try {
-    // Replace [VariableName] with actual values
-    const evaluatedFormula = formula.replace(/\[([^\]]+)\]/g, (_, varName) => {
+    // Replace {VariableName} with actual values
+    const evaluatedFormula = formula.replace(/\{([^}]+)\}/g, (_, varName) => {
       const trimmed = varName.trim();
 
       // Check parameters first
@@ -77,9 +79,12 @@ export const evaluateFormula = (
       return "0";
     });
 
+    // Replace (ColumnName) with 0 (columns are constants, not evaluated in legacy mode)
+    const finalFormula = evaluatedFormula.replace(/\([^)]+\)/g, "0");
+
     // Evaluate the expression
     // Only allow basic math operations for security
-    const sanitized = evaluatedFormula.replace(/[^0-9+\-*/().\s]/g, "");
+    const sanitized = finalFormula.replace(/[^0-9+\-*/().\s]/g, "");
     return Function(`"use strict"; return (${sanitized})`)();
   } catch (error) {
     console.error("Formula evaluation error:", error);
@@ -88,7 +93,8 @@ export const evaluateFormula = (
 };
 
 /**
- * Evaluate a constraint expression like [TotalRevenue] >= 100000
+ * Evaluate a constraint expression like {TotalRevenue} >= 100000
+ * Variables: {VariableName}, Columns: (ColumnName)
  * Returns true if constraint is satisfied, false otherwise
  */
 export const evaluateConstraint = (
@@ -99,8 +105,8 @@ export const evaluateConstraint = (
   if (!expression.trim()) return true;
 
   try {
-    // Replace [VariableName] with actual values
-    const evaluatedExpression = expression.replace(/\[([^\]]+)\]/g, (_, varName) => {
+    // Replace {VariableName} with actual values
+    const evaluatedExpression = expression.replace(/\{([^}]+)\}/g, (_, varName) => {
       const trimmed = varName.trim();
 
       // Check parameters first
@@ -116,8 +122,11 @@ export const evaluateConstraint = (
       return "0";
     });
 
+    // Replace (ColumnName) with 0 (columns are constants, not evaluated in legacy mode)
+    const finalExpression = evaluatedExpression.replace(/\([^)]+\)/g, "0");
+
     // Sanitize and evaluate
-    const sanitized = evaluatedExpression.replace(/[^0-9+\-*/().<>=!&|\s]/g, "");
+    const sanitized = finalExpression.replace(/[^0-9+\-*/().<>=!&|\s]/g, "");
     return Function(`"use strict"; return (${sanitized})`)();
   } catch (error) {
     console.error("Constraint evaluation error:", error);
@@ -174,10 +183,11 @@ export const applyAggregateFunction = (
 };
 
 /**
- * Parse a formula and extract all variable references in [VariableName] format
+ * Parse a formula and extract all variable references in {VariableName} format
+ * Note: Does NOT extract (ColumnName) as these are column constants, not variables
  */
 export const extractVariableNames = (formula: string): string[] => {
-  const matches = formula.match(/\[([^\]]+)\]/g);
+  const matches = formula.match(/\{([^}]+)\}/g);
   if (!matches) return [];
 
   return matches.map((match) => match.slice(1, -1).trim());
