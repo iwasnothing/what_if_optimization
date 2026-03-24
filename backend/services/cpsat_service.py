@@ -2,7 +2,6 @@ import json
 import logging
 import math
 import os
-import tempfile
 from datetime import datetime
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, TypedDict
@@ -16,12 +15,22 @@ logger = logging.getLogger(__name__)
 
 DEBUG_DIR = os.getenv(
     "CPSAT_DEBUG_DIR",
-    os.path.join(tempfile.gettempdir(), "what-if-cpsat-debug"),
+    os.path.join(os.getcwd(), "what-if-cpsat-debug"),
 )
 os.makedirs(DEBUG_DIR, exist_ok=True)
 
 SCALE = 100
 BIG_BOUND = 10**12
+
+
+def _log_cp_sat_solver_chunk(msg: str) -> None:
+    """OR-Tools log_callback often splits one logical line across chunks or prefixes with \\n; normalize to one log line each."""
+    if not msg:
+        return
+    for line in msg.replace("\r\n", "\n").split("\n"):
+        s = line.strip()
+        if s:
+            logger.info("[cp-sat] %s", s)
 
 
 def _model_dump(model: Any) -> Dict[str, Any]:
@@ -241,6 +250,15 @@ class CPSatService:
             solver = cp_model.CpSolver()
             solver.parameters.max_time_in_seconds = float(timeout)
 
+            # OR-Tools presolve + search trace (via Python logging, not raw stdout).
+            solver.parameters.log_search_progress = True
+            solver.log_callback = _log_cp_sat_solver_chunk
+
+            num_workers_raw = os.getenv("CPSAT_NUM_SEARCH_WORKERS", "").strip()
+            if num_workers_raw.isdigit():
+                solver.parameters.num_search_workers = int(num_workers_raw)
+                logger.info("CP-SAT num_search_workers=%s", num_workers_raw)
+
             row_vars: Dict[str, Dict[int, Any]] = {}
             portfolio_vars: Dict[str, Dict[str, Any]] = {}
 
@@ -406,8 +424,28 @@ class CPSatService:
                 model.Minimize(objective_expr)
 
             # 6) Solve
+            proto = model.Proto()
+            num_proto_vars = len(proto.variables)
+            num_proto_cts = len(proto.constraints)
+            logger.info(
+                "CP-SAT solve starting: %s variables, %s constraints, max_time=%ss",
+                num_proto_vars,
+                num_proto_cts,
+                timeout,
+            )
             status = solver.Solve(model)
             status_name = solver.StatusName(status)
+            logger.info(
+                "CP-SAT solve finished: status=%s wall_time=%.3fs user_time=%.3fs "
+                "conflicts=%s branches=%s booleans=%s",
+                status_name,
+                solver.WallTime(),
+                solver.UserTime(),
+                solver.NumConflicts(),
+                solver.NumBranches(),
+                solver.NumBooleans(),
+            )
+            logger.debug("CP-SAT ResponseStats:\n%s", solver.ResponseStats())
 
             # Save debug file
             if self.enable_debug_logging:
@@ -784,6 +822,61 @@ class CPSatService:
 
                 # Now create constraint for each group key (all portfolio vars should have same groups)
                 for group_key in sorted(all_group_keys):
+                    left = self._build_expr_for_terms(
+                        terms=constraint.left_terms,
+                        row_index=None,
+                        row=None,
+                        scenario_params=scenario_params,
+                        row_vars=row_vars,
+                        portfolio_vars=portfolio_vars,
+                        group_key=group_key,
+                    )
+                    right = self._build_expr_for_terms(
+                        terms=constraint.right_terms,
+                        row_index=None,
+                        row=None,
+                        scenario_params=scenario_params,
+                        row_vars=row_vars,
+                        portfolio_vars=portfolio_vars,
+                        group_key=group_key,
+                    )
+                    self._add_linear_constraint(
+                        model,
+                        left,
+                        constraint.operator,
+                        right,
+                        description=f"portfolio_constraint_{constraint.description}",
+                        group_key=group_key,
+                    )
+            elif scope == "portfolio" and len(portfolio_vars_in_constraint) == 1:
+                # One distinct portfolio variable (e.g. total == constant); the >1 branch
+                # above never runs, but we still must emit the linear constraint(s).
+                sole_name = next(iter(portfolio_vars_in_constraint))
+                group_keys_one = sorted(portfolio_vars[sole_name].keys())
+                left_pf_names = {
+                    str(t.name_or_value)
+                    for t in constraint.left_terms
+                    if t.term_type == "portfolio_var"
+                }
+                right_pf_names = {
+                    str(t.name_or_value)
+                    for t in constraint.right_terms
+                    if t.term_type == "portfolio_var"
+                }
+                if (
+                    len(group_keys_one) > 1
+                    and sole_name in left_pf_names
+                    and sole_name in right_pf_names
+                ):
+                    raise ValueError(
+                        f"Constraint '{constraint.description}' references grouped portfolio "
+                        f"'{sole_name}' on both sides. The executor applies one constraint per "
+                        f"group key, so the same name on left and right becomes a self-relation "
+                        f"(e.g. Senior <= k - Senior), which is not a valid cross-group ratio. "
+                        f"Use two distinct portfolio_variables (e.g. aggregates for Senior vs Junior) "
+                        f"and reference two different portfolio_var names in the constraint."
+                    )
+                for group_key in group_keys_one:
                     left = self._build_expr_for_terms(
                         terms=constraint.left_terms,
                         row_index=None,

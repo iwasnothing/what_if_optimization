@@ -3,9 +3,14 @@ export default function CustomScrollbar() {
     <style
       dangerouslySetInnerHTML={{
         __html: `
+        .custom-scrollbar {
+          scrollbar-gutter: stable;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.22) rgba(255, 255, 255, 0.06);
+        }
         .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-          height: 6px;
+          width: 8px;
+          height: 8px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
           background: transparent;

@@ -171,6 +171,14 @@ You MUST create THREE types of variables in your output:
 
 DO NOT create row_intermediates from portfolioLevelIntermediateVariables - they MUST go in portfolio_variables.
 
+### CONSTRAINTS ARE NOT FREE-FORM FORMULAS
+`CPSatConstraint` is always **linear**: `left_terms` and `right_terms` are lists of `Term` objects, and the backend builds **one affine expression per side** (sum of variable × coefficient, plus constants). There is no nested expression tree. That matches CP-SAT, which only allows **linear** (in)equalities.
+
+### MULTIPLICATION INSIDE A CONSTRAINT (ALLOWED)
+You **can** represent "parameter × portfolio aggregate" and "constant × portfolio aggregate":
+- Put **one** `Term` with `term_type="portfolio_var"` and set `coefficient` to the **scenario parameter name as a string** (e.g. `"type_ratio"`) so the engine multiplies that aggregate by the parameter value.
+- **WRONG:** multiple `portfolio_var` terms with the same `name_or_value` on left and right, or a useless term with `coefficient: 0.0`, or trying to algebraically rearrange `senior <= ratio * junior` into `senior <= ratio - junior` (that is mathematically different and invalid).
+
 ### CRITICAL RULES FOR PORTFOLIO VARIABLES IN CONSTRAINTS:
 When you translate constraints and objectives, you MUST ensure ALL portfolio variables referenced are defined in "portfolio_variables":
 
@@ -178,7 +186,49 @@ When you translate constraints and objectives, you MUST ensure ALL portfolio var
 2. If any portfolio variable doesn't exist in your portfolio_variables list, CREATE IT
 3. Example: If constraint says "staff per region <= 0.33 * total_staff_count", you MUST create total_staff_count as a portfolio variable
 
-5. Output only the schema-compliant structure via structured output.
+4. **Cross-group ratios** (e.g. "ratio of senior staff to junior staff <= type_ratio"):
+   - Meaning: `senior_total <= type_ratio * junior_total` (linear if `type_ratio` is a scenario parameter).
+   - You MUST define **two** portfolio_variables with **different** `portfolio_name` values—typically **filtered sums** with `group_by_columns: []`, `aggregate_function: "sum"`, same `source_row_variable`, and **`if_condition`** so one row set is Senior-only and the other Junior-only (use the actual discriminator column and values from the DataFrame schema, e.g. `resource_type`).
+   - The constraint MUST reference those **two names**: left side = senior aggregate (`coefficient` 1.0), right side = **one** term junior aggregate with `coefficient` **string** `"type_ratio"` (the parameter name).
+   - **NEVER** put the same grouped `portfolio_var` (e.g. `staff_by_type`) on both sides of one constraint.
+
+5. **Worked example** (adjust column/value names to match `df_schema` and user data):
+
+portfolio_variables (fragment):
+```
+[
+  {{
+    "portfolio_name": "staff_senior_total",
+    "group_by_columns": [],
+    "aggregate_function": "sum",
+    "source_row_variable": "staff_count",
+    "if_condition": {{"enabled": true, "column": "resource_type", "operator": "==", "value": "Senior"}}
+  }},
+  {{
+    "portfolio_name": "staff_junior_total",
+    "group_by_columns": [],
+    "aggregate_function": "sum",
+    "source_row_variable": "staff_count",
+    "if_condition": {{"enabled": true, "column": "resource_type", "operator": "==", "value": "Junior"}}
+  }}
+]
+```
+
+matching constraint (fragment):
+```
+{{
+  "description": "ratio of senior staff to junior staff <= type_ratio",
+  "left_terms": [
+    {{"term_type": "portfolio_var", "name_or_value": "staff_senior_total", "coefficient": 1.0}}
+  ],
+  "operator": "<=",
+  "right_terms": [
+    {{"term_type": "portfolio_var", "name_or_value": "staff_junior_total", "coefficient": "type_ratio"}}
+  ]
+}}
+```
+
+6. Output only the schema-compliant structure via structured output.
 """
 
         user_prompt = """

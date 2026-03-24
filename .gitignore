@@ -75,3 +75,8 @@ coverage/
 *.pem
 .vercel
 backend-debug
+cpsat_debug
+*csv
+package-lock.json
+playwright-report
+test-results

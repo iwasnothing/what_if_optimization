@@ -1,0 +1,25 @@
+{
+  "name": "what-if",
+  "version": "1.0.0",
+  "description": "A full-stack application for performing what-if scenario analysis using Google OR-Tools CP-SAT solver with LLM-generated optimization configurations.",
+  "main": "index.js",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iwasnothing/what_if_optimization.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/iwasnothing/what_if_optimization/issues"
+  },
+  "homepage": "https://github.com/iwasnothing/what_if_optimization#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@tailwindcss/postcss": "^4.2.1",
+    "@types/node": "^25.5.0",
+    "tailwindcss": "^4.2.1"
+  }
+}

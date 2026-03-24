@@ -141,7 +141,12 @@ class Term(BaseModel):
     )
     coefficient: Union[float, str] = Field(
         default=1.0,
-        description="Multiplier for this term: numeric constant (e.g., 1.0, 5.0, -0.5) or column/parameter name for dynamic per-row coefficient (e.g., 'cost_rate', 'tax_rate').",
+        description=(
+            "Multiplier: numeric constant, or a string naming a DataFrame column (per-row) or scenario parameter. "
+            "For 'aggregate <= parameter * other_aggregate', use ONE portfolio_var term on the right with "
+            "coefficient set to that parameter name (e.g. 'type_ratio'); do not duplicate the same portfolio_var "
+            "on both sides of a constraint."
+        ),
     )
 
 
@@ -183,7 +188,13 @@ class CPSatPortfolioVariable(BaseModel):
 
 
 class CPSatConstraint(BaseModel):
-    description: str
+    description: str = Field(
+        description=(
+            "Linear constraint: sum(left_terms) operator sum(right_terms). "
+            "Ratios between cohorts (e.g. senior vs junior) need two different portfolio_var names, "
+            "usually from two filtered portfolio_variables; never the same grouped portfolio on both sides."
+        )
+    )
     left_terms: List[Term]
     operator: TermOperator
     right_terms: List[Term]

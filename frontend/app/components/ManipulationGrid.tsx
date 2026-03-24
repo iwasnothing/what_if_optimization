@@ -1,13 +1,25 @@
-import { Play, CheckCircle2, Clock, FileText, RotateCcw } from "lucide-react";
-import { glassPanel, glassButton, glassInput, glassCard } from "../lib/constants";
+"use client";
+
+import { useMemo, useState } from "react";
+import {
+  Play,
+  CheckCircle2,
+  Clock,
+  FileText,
+  RotateCcw,
+  GitCompare,
+  ArrowLeft,
+} from "lucide-react";
+import { glassPanel, glassButton, glassInput } from "../lib/constants";
 import type { ConfigState, Scenario } from "../types";
+import ScenarioObjectiveComparisonChart from "./ScenarioObjectiveComparisonChart";
 
 interface ManipulationGridProps {
   config: ConfigState;
   scenarios: Scenario[];
   onCreateScenario: () => void;
   onUpdateScenario: (id: number, updates: Partial<Scenario>) => void;
-  onRunOptimization: (id: number) => void;
+  onRunOptimization: (scenario: Scenario) => void;
   onViewResults: (scenario: Scenario) => void;
 }
 
@@ -19,20 +31,71 @@ export default function ManipulationGrid({
   onRunOptimization,
   onViewResults,
 }: ManipulationGridProps) {
+  const [centerView, setCenterView] = useState<"table" | "compare">("table");
+
+  const canCompare = useMemo(
+    () =>
+      scenarios.some(
+        (s) =>
+          s.optimizationResult != null &&
+          Number.isFinite(s.optimizationResult.objectiveValue)
+      ),
+    [scenarios]
+  );
+
   return (
     <section className={`${glassPanel} flex-1 flex flex-col min-w-[800px]`}>
       <div className="p-5 border-b border-white/10 flex justify-between items-center bg-white/5">
         <h2 className="text-lg font-semibold flex items-center gap-2">
-          <FileText className="w-5 h-5 text-blue-400" />
-          Scenarios Table
+          {centerView === "table" ? (
+            <>
+              <FileText className="w-5 h-5 text-blue-400" />
+              Scenarios Table
+            </>
+          ) : (
+            <>
+              <GitCompare className="w-5 h-5 text-cyan-400" />
+              Compare scenario
+            </>
+          )}
         </h2>
         <div className="flex gap-2">
-          <button
-            onClick={onCreateScenario}
-            className={`${glassButton} text-xs py-1.5 bg-purple-500/20 border-purple-500/50 hover:bg-purple-500/30`}
-          >
-            <Play className="w-3 h-3" /> Create Scenario
-          </button>
+          {centerView === "compare" ? (
+            <button
+              type="button"
+              onClick={() => setCenterView("table")}
+              className={`${glassButton} text-xs py-1.5 bg-slate-500/20 border-slate-400/40 hover:bg-slate-500/30`}
+            >
+              <ArrowLeft className="w-3 h-3" /> Back to table
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setCenterView("compare")}
+                disabled={
+                  config.scenarioParameters.length === 0 ||
+                  scenarios.length === 0 ||
+                  !canCompare
+                }
+                title={
+                  !canCompare
+                    ? "Run optimization on at least one scenario to compare objectives"
+                    : "Objective value by scenario"
+                }
+                className={`${glassButton} text-xs py-1.5 bg-cyan-500/20 border-cyan-500/50 hover:bg-cyan-500/30 disabled:opacity-40 disabled:pointer-events-none`}
+              >
+                <GitCompare className="w-3 h-3" /> Compare scenario
+              </button>
+              <button
+                type="button"
+                onClick={onCreateScenario}
+                className={`${glassButton} text-xs py-1.5 bg-purple-500/20 border-purple-500/50 hover:bg-purple-500/30`}
+              >
+                <Play className="w-3 h-3" /> Create Scenario
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -43,6 +106,10 @@ export default function ManipulationGrid({
             <p className="text-sm">
               Please define scenario parameters in the Control Center first
             </p>
+          </div>
+        ) : centerView === "compare" ? (
+          <div className="border border-white/10 rounded-2xl overflow-hidden bg-black/20 p-4 min-h-[400px]">
+            <ScenarioObjectiveComparisonChart scenarios={scenarios} />
           </div>
         ) : (
           <div className="min-w-full inline-block align-middle">
@@ -97,7 +164,7 @@ interface TableBodyProps {
   config: ConfigState;
   scenarios: Scenario[];
   onUpdateScenario: (id: number, updates: Partial<Scenario>) => void;
-  onRunOptimization: (id: number) => void;
+  onRunOptimization: (scenario: Scenario) => void;
   onViewResults: (scenario: Scenario) => void;
 }
 
@@ -114,7 +181,7 @@ function TableBody({
         <tr>
           <td colSpan={config.scenarioParameters.length + 2} className="px-4 py-8">
             <div className="text-center text-white/50 text-sm">
-              No scenarios created yet. Click "Create Scenario" to add one.
+              No scenarios created yet. Click &apos;Create Scenario&apos; to add one.
             </div>
           </td>
         </tr>
@@ -176,7 +243,7 @@ function TableBody({
                       Completed
                     </div>
                     <button
-                      onClick={() => onRunOptimization(scenario.id)}
+                      onClick={() => onRunOptimization(scenario)}
                       className={`${glassButton} text-xs py-1.5 bg-purple-500/20 border-purple-500/50 hover:bg-purple-500/30`}
                       title="Re-run scenario"
                     >
@@ -185,7 +252,7 @@ function TableBody({
                   </>
                 ) : (
                   <button
-                    onClick={() => onRunOptimization(scenario.id)}
+                    onClick={() => onRunOptimization(scenario)}
                     className={`${glassButton} text-xs py-1.5 bg-emerald-500/20 border-emerald-500/50 hover:bg-emerald-500/30`}
                   >
                     <Play className="w-3 h-3" /> Run

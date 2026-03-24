@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   FileText,
   Settings,
@@ -46,6 +46,19 @@ const initialConfig: ConfigState = {
 };
 
 const initialScenarios: Scenario[] = [];
+
+/** Playwright / manual debugging: open with `?__pw_debug=1` to expose scenario objective snapshot on `window`. */
+declare global {
+  interface Window {
+    __WHAT_IF_DEBUG_SCENARIOS__?: Array<{
+      id: number;
+      name: string;
+      isCompleted: boolean;
+      isRunning: boolean;
+      objectiveValue: number | null;
+    }>;
+  }
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("input");
@@ -110,67 +123,73 @@ export default function App() {
   );
 
   const handleRunOptimization = useCallback(
-    async (id: number) => {
+    async (scenario: Scenario) => {
+      const sid = Number(scenario.id);
+      if (!Number.isFinite(sid)) {
+        addLog(`Error running optimization: invalid scenario id`);
+        return;
+      }
+
       setScenarios((prev) =>
         prev.map((s) =>
-          s.id === id ? { ...s, isRunning: true } : s
+          Number(s.id) === sid ? { ...s, isRunning: true } : s
         )
       );
 
-      const scenario = scenarios.find((s) => s.id === id);
-      if (scenario) {
-        addLog(`Running optimization for scenario "${scenario.name}"...`);
+      addLog(`Running optimization for scenario "${scenario.name}"...`);
 
-        try {
-          // Convert CSV rows to the format expected by the backend
-          const csvDataPayload = csvData ? {
-            columns: csvData.columns,
-            rows: csvData.rows.map(row => ({ data: row })),
-          } : null;
+      try {
+        const csvDataPayload = csvData
+          ? {
+              columns: csvData.columns,
+              rows: csvData.rows.map((row) => ({ data: row })),
+            }
+          : null;
 
-          const response = await fetch(`${getBackendUrl()}/api/run_scenario`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              config,
-              scenario,
-              csvData: csvDataPayload,
-            }),
-          });
+        const response = await fetch(`${getBackendUrl()}/api/run_scenario`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            config,
+            scenario,
+            csvData: csvDataPayload,
+          }),
+        });
 
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const result: OptimizationResult = await response.json();
-
-          setScenarios((prev) =>
-            prev.map((s) =>
-              s.id === id
-                ? {
-                    ...s,
-                    isRunning: false,
-                    isCompleted: true,
-                    optimizationResult: result,
-                  }
-                : s
-            )
-          );
-          addLog(`Optimization completed for scenario "${scenario.name}"`);
-        } catch (error) {
-          console.error("Optimization error:", error);
-          addLog(`Error running optimization: ${error instanceof Error ? error.message : "Unknown error"}`);
-          setScenarios((prev) =>
-            prev.map((s) =>
-              s.id === id ? { ...s, isRunning: false } : s
-            )
-          );
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
+
+        const result: OptimizationResult = await response.json();
+
+        setScenarios((prev) =>
+          prev.map((s) =>
+            Number(s.id) === sid
+              ? {
+                  ...s,
+                  isRunning: false,
+                  isCompleted: true,
+                  optimizationResult: result,
+                }
+              : s
+          )
+        );
+        addLog(`Optimization completed for scenario "${scenario.name}"`);
+      } catch (error) {
+        console.error("Optimization error:", error);
+        addLog(
+          `Error running optimization: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+        setScenarios((prev) =>
+          prev.map((s) =>
+            Number(s.id) === sid ? { ...s, isRunning: false } : s
+          )
+        );
       }
     },
-    [scenarios, addLog, config, csvData]
+    [addLog, config, csvData]
   );
 
   const handleViewResults = useCallback(
@@ -188,6 +207,27 @@ export default function App() {
   const latestResult = scenarios
     .filter((s) => s.isCompleted && s.optimizationResult)
     .sort((a, b) => b.id - a.id)[0]?.optimizationResult || null;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("__pw_debug") !== "1") return;
+    window.__WHAT_IF_DEBUG_SCENARIOS__ = scenarios.map((s) => {
+      const raw = s.optimizationResult?.objectiveValue;
+      let objectiveValue: number | null = null;
+      if (raw != null) {
+        const n = typeof raw === "number" ? raw : Number(raw);
+        objectiveValue = Number.isFinite(n) ? n : null;
+      }
+      return {
+        id: s.id,
+        name: s.name,
+        isCompleted: !!s.isCompleted,
+        isRunning: !!s.isRunning,
+        objectiveValue,
+      };
+    });
+  }, [scenarios]);
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-purple-500/30 overflow-hidden relative">
